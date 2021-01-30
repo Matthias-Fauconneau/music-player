@@ -5,7 +5,6 @@ authors= ['Matthias Fauconneau <matthias.fauconneau@gmail.com>']
 edition= '2018'
 
 [dependencies]
-derive_more= ''
 anyhow= ''
 fehler= ''
 futures-lite= ''

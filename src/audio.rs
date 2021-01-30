@@ -1,11 +1,7 @@
 use fehler::throws;
 
-//#[derive(derive_more::Deref, derive_more::DerefMut)]
 pub struct Output {
-	//pub poll: Vec<alsa::poll::pollfd>,
 	pub device: alsa::PCM,
-	//pub rate: u32,
-	//#[deref]#[deref_mut]
 	output: alsa::direct::pcm::MmapPlayback<i16>,
 }
 
@@ -39,7 +35,7 @@ impl Output {
 	for (target, frame) in target { unsafe{std::ptr::write_volatile(target as *mut [i16; 2], [frame.0, frame.1])}; }
 	self.output.commit(len as alsa::pcm::Frames);
 	if self.output.status().state() == alsa::pcm::State::Prepared { self.device.start()?; }
-	assert!(self.output.status().state() == alsa::pcm::State::Running);
+	assert!({use alsa::pcm::State::*; matches!(self.output.status().state(), Running|Paused)});
 	len
 }
 
