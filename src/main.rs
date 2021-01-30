@@ -1,4 +1,6 @@
-#[fehler::throws(anyhow::Error)] fn visit(path: &std::path::Path, f: &impl Fn(&std::fs::DirEntry) -> anyhow::Result<()>) {
+use {anyhow::{Error, Result}, fehler::throws};
+
+#[throws] fn visit(path: &std::path::Path, f: &mut impl FnMut(&std::fs::DirEntry) -> Result<()>) {
 	if path.is_dir() {
 		for entry in std::fs::read_dir(path)? {
 			let entry = entry?;
@@ -8,12 +10,16 @@
 	}
 }
 
-#[fehler::throws(anyhow::Error)] fn main() {
-	let (_, output) = rodio::OutputStream::try_default()?;
-	#[fehler::throws(anyhow::Error)] fn play(output: &rodio::OutputStreamHandle, entry: &std::fs::DirEntry) {
-		use anyhow::Context;
-		let sink = output.play_once(std::io::BufReader::new(std::fs::File::open(entry.path())?)).context(entry.path().to_str().unwrap().to_owned())?;
-    sink.sleep_until_end();
-	}
-	visit(&std::env::current_dir()?, &|entry| play(&output, entry))?
+mod audio;
+
+#[throws] fn play(output: &mut audio::Output, entry: &std::fs::DirEntry) {
+	let mut reader = claxon::FlacReader::open(entry.path())?;
+	assert_eq!(reader.streaminfo().sample_rate, output.rate);
+	let mut samples = reader.samples().map(|v| v.unwrap() as i16);
+	while output.write(&mut samples) > 0 {}
+}
+
+#[throws] fn main() {
+	let mut output = audio::output()?;
+	visit(&std::env::current_dir()?, &mut move |entry| play(&mut output, entry))?
 }
