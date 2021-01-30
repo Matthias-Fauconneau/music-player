@@ -27,3 +27,12 @@ use fehler::throws;
 	device.start()?;
 	Output{rate: hardware_parameters.get_rate()?, output}
 }
+
+pub fn write(output: &mut alsa::direct::pcm::MmapPlayback<i16>, frames: &mut impl ExactSizeIterator<Item=(i16, i16)>) -> usize {
+	let (buffer, _) = output.data_ptr();
+	let buffer = unsafe{std::slice::from_raw_parts_mut(buffer.ptr as *mut [i16; 2], buffer.frames as usize)};
+	let target = buffer.into_iter().zip(frames);
+	let len = target.len();
+	for (target, frame) in target { unsafe{std::ptr::write_volatile(target as *mut [i16; 2], [frame.0, frame.1])}; }
+	{output.commit(len as alsa::pcm::Frames); len}
+}
