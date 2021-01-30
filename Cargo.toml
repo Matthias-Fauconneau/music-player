@@ -13,5 +13,5 @@ alsa= ''
 symphonia= {features= ['mp3'], version= ''}
 ui= {path='../ui'}#git='https://github.com/Matthias-Fauconneau/ui'}
 async-io= ''
-mpris-player= ''
-glib= ''
+dbus= ''
+dbus-crossroads= ''
