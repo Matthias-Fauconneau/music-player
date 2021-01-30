@@ -8,5 +8,9 @@ edition= '2018'
 derive_more= ''
 anyhow= ''
 fehler= ''
+futures-lite= ''
+walkdir= ''
 alsa= ''
 symphonia= {features= ['mp3'], version= ''}
+ui= {path='../ui'}#git='https://github.com/Matthias-Fauconneau/ui'}
+async-io= ''
