@@ -9,4 +9,4 @@ derive_more= ''
 anyhow= ''
 fehler= ''
 alsa= ''
-symphonia= ''
+symphonia= {features= ['mp3'], version= ''}
