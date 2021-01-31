@@ -39,6 +39,7 @@ use symphonia::core::{*, audio::AudioBuffer};
 		}};
 		if !key.is_empty() { metadata.insert(key.to_string(), tag.value.clone()); }
 	}}
+	let path = path.canonicalize()?;
 	metadata.insert("xesam:url".to_string(), format!("file://{}", path.to_str().unwrap()));
 	metadata.insert("mpris:artUrl".to_string(), format!("file://{}", path.with_file_name("cover.jpg").to_str().unwrap()));
 	let decoder = symphonia::default::get_codecs().make(&codec_parameters, &default())?;
@@ -61,7 +62,16 @@ impl ObjectServer<'_> {
 }
 
 impl ui::widget::Widget for ObjectServer<'_> {
-	#[throws] fn paint(&mut self, _: &mut ui::widget::Target) {
+	#[throws] fn paint(&mut self, target: &mut ui::widget::Target) {
+		let path = self.with(|o| url::Url::parse(o.metadata.get("mpris:artUrl").unwrap()))??;
+		let path = path.to_file_path().map_err(|_| Error::msg(path))?;
+		let image = image_io::io::Reader::open(path)?.decode()?.into_rgb8();
+		let image = image::Image::<&[image::rgb::rgb::<u8>]>::new(image.dimensions().into(), unsafe{image::slice::cast(&image)});
+		let size = ui::text::fit(target.size, image.size);
+		target.fill(0.into());
+		let mut target = target.slice_mut((target.size-size)/2, size);
+		let size = target.size;
+		target.set(|p| image[p*(image.size-1.into())/(size-1.into())].into());
 	}
 	#[throws] fn event(&mut self, _: ui::widget::size, _: &ui::widget::EventContext, event: &ui::widget::Event) -> bool {
 		match event {

@@ -12,7 +12,18 @@ futures-util= ''
 walkdir= ''
 alsa= ''
 symphonia= {features= ['mp3'], version= ''}
-ui= {path='../ui'}#git='https://github.com/Matthias-Fauconneau/ui'}
+ui= {git='https://github.com/Matthias-Fauconneau/ui'}
 async-io= ''
-#zbus= {git='https://gitlab.freedesktop.org/matthias.fauconneau/zbus', branch='main'}
-zbus= {path='../zbus/zbus'}
+zbus= {git='https://gitlab.freedesktop.org/matthias.fauconneau/zbus', branch='main'}
+image-io= {package='image', version=''}
+image= {git='https://github.com/Matthias-Fauconneau/image'}
+url= ''
+
+[patch.'https://github.com/Matthias-Fauconneau/image']
+image= {path = "../image"}
+
+#[patch.'https://github.com/Matthias-Fauconneau/ui']
+#ui= {path='../ui'}
+
+#[patch.'https://gitlab.freedesktop.org/matthias.fauconneau/zbus']
+#zbus= {path='../zbus/zbus'}
