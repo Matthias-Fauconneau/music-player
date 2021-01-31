@@ -65,7 +65,6 @@ impl ui::widget::Widget for &Player {
 
 async fn dbus(dbus: zbus::Connection, object_server: &RefCell<zbus::ObjectServer>) -> zbus::Result<()> {
 	loop {
-		dbg!(".");
 		let msg = dbus.0.receive_specific(|_| Ok(true)).await?;
 		object_server.borrow_mut().dispatch_message(&msg)?;
 	}
@@ -73,6 +72,7 @@ async fn dbus(dbus: zbus::Connection, object_server: &RefCell<zbus::ObjectServer
 
 #[throws] fn main() {
 	let dbus = zbus::Connection::new_session()?;
+	zbus::fdo::DBusProxy::new(&dbus)?.request_name("org.mpris.MediaPlayer2.RustMusic", default())?;
 
 	let audio::Output{device, mut output} = audio::Output::new()?;
 	let ref player = Player{device, metadata: default()};
