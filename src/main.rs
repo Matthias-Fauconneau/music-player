@@ -74,9 +74,10 @@ impl ui::widget::Widget for ObjectServer<'_> {
 		target.set(|p| image[p*(image.size-1.into())/(size-1.into())].into());}
 		if !self.with(|o| playing(&o.device))? {
 			let size = std::cmp::min(target.size.x, target.size.y).into();
-			let target = target.slice_mut((target.size-size)/2, size);
-			target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:3}, size/xy{x:5, y:3}).target.fill(0.into());
-			target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:3}, size/xy{x:5, y:3}).target.fill(0.into());
+			let mut target = target.slice_mut((target.size-size)/2, size);
+			use xy::xy;
+			image::invert(&mut target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}), true.into());
+			image::invert(&mut target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}), true.into());
 		}
 	}
 	#[throws] fn event(&mut self, _: ui::widget::size, _: &ui::widget::EventContext, event: &ui::widget::Event) -> bool {
@@ -97,7 +98,10 @@ impl ui::widget::Widget for ObjectServer<'_> {
 	let _mpris = mpris::at(object_server, Player{device, metadata})?;
 	let mut app = ui::app::App::new(ObjectServer(object_server))?;
 	use futures_lite::stream::{self, StreamExt};
-	app.streams.push(async_io::block_on(dbus.0.stream()).map(|message| (box move |app: &mut ui::app::App<ObjectServer>| { app.widget.0.borrow_mut().dispatch_message(&message?)?; Ok(()) }) as Box<dyn FnOnce(&mut _)->Result<()>>).boxed_local());
+	app.streams.push(async_io::block_on(dbus.0.stream()).map(|message| (box move |app: &mut ui::app::App<ObjectServer>| {
+		app.widget.0.borrow_mut().dispatch_message(&message?)?;
+		app.draw()
+	}) as Box<dyn FnOnce(&mut _)->Result<()>>).boxed_local());
 	app.streams.push(stream::try_unfold((output, playlist, (reader, decoder)), async move |(mut output, mut playlist, (mut reader, mut decoder))| {
 		while let Ok(packet) = reader.next_packet() {
 			{use symphonia::core::audio::AudioBufferRef::*; match decoder.decode(&packet)? {
