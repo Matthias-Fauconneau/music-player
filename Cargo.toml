@@ -12,6 +12,7 @@ futures-util= ''
 walkdir= ''
 alsa= ''
 symphonia= {features= ['mp3'], version= ''}
-ui= {git='https://github.com/Matthias-Fauconneau/ui'}
+ui= {path='../ui'}#git='https://github.com/Matthias-Fauconneau/ui'}
 async-io= ''
-zbus= {git='https://gitlab.freedesktop.org/matthias.fauconneau/zbus', branch='main'}
+#zbus= {git='https://gitlab.freedesktop.org/matthias.fauconneau/zbus', branch='main'}
+zbus= {path='../zbus/zbus'}

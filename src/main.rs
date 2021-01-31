@@ -1,5 +1,5 @@
-#![feature(default_free_fn, in_band_lifetimes, never_type)]
-use {fehler::throws, anyhow::Error, std::{default::default, cell::RefCell}};
+#![feature(default_free_fn, async_closure, generators, generator_trait, box_syntax)]
+use {fehler::throws, anyhow::{Error, Result}, std::default::default};
 mod audio;
 mod mpris;
 
@@ -17,7 +17,6 @@ use symphonia::core::{*, audio::AudioBuffer};
 	}
 }
 
-//*self.metadata.lock().unwrap() = metadata;
 #[throws] fn open(path: &std::path::Path) -> (Box<dyn formats::FormatReader>, std::collections::HashMap<String, String>, Box<dyn codecs::Decoder>) {
 	let file = symphonia::default::get_probe().format(&symphonia::core::probe::Hint::new().with_extension(path.extension().unwrap().to_str().unwrap()),
 																																									 symphonia::core::io::MediaSourceStream::new(Box::new(std::fs::File::open(path)?)), &default(), &default())?;
@@ -46,27 +45,26 @@ use symphonia::core::{*, audio::AudioBuffer};
 	(container, metadata, decoder)
 }
 
-pub struct Player {
-	device: alsa::PCM,
-	metadata: std::cell::RefCell<std::collections::HashMap<String, String>>,
+pub struct Player<'t> {
+	device: &'t alsa::PCM,
+	metadata: std::collections::HashMap<String, String>,
 }
 
-impl ui::widget::Widget for &Player {
+struct ObjectServer(zbus::ObjectServer);
+impl ObjectServer {
+	const PATH: &'static str = "/org/mpris/MediaPlayer2";
+	fn with<R>(&self, f: impl Fn(&Player)->R) -> zbus::Result<R> { self.0.with(Self::PATH, |o| Ok(f(o))) }
+}
+
+impl ui::widget::Widget for ObjectServer {
 	#[throws] fn paint(&mut self, _: &mut ui::widget::Target) {
 	}
 	#[throws] fn event(&mut self, _: ui::widget::size, _: &ui::widget::EventContext, event: &ui::widget::Event) -> bool {
 		match event {
-			ui::widget::Event::Key{key:' '} => toggle_play_pause(&self.device)?,
+			ui::widget::Event::Key{key:' '} => self.with(|o| toggle_play_pause(&o.device))??,
 			_ => {}
 		}
 		false
-	}
-}
-
-async fn dbus(dbus: zbus::Connection, object_server: &RefCell<zbus::ObjectServer>) -> zbus::Result<()> {
-	loop {
-		let msg = dbus.0.receive_specific(|_| Ok(true)).await?;
-		object_server.borrow_mut().dispatch_message(&msg)?;
 	}
 }
 
@@ -74,30 +72,41 @@ async fn dbus(dbus: zbus::Connection, object_server: &RefCell<zbus::ObjectServer
 	let dbus = zbus::Connection::new_session()?;
 	zbus::fdo::DBusProxy::new(&dbus)?.request_name("org.mpris.MediaPlayer2.RustMusic", default())?;
 
-	let audio::Output{device, mut output} = audio::Output::new()?;
-	let ref player = Player{device, metadata: default()};
-	let ref device = player.device;
-	let ref object_server = RefCell::new(zbus::ObjectServer::new(&dbus));
-	let _mpris = mpris::at(object_server, player)?;
-	let mut app = ui::app::App::new(player)?;
-
-	use futures_lite::FutureExt;
-	use futures_util::future::TryFutureExt;
-	async_io::block_on(
-		self::dbus(dbus, object_server).map_err(Error::new)
-		.or(async { app.display().await; Ok(()) })
-		.or(async {
-			for entry in walkdir::WalkDir::new(".").into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()) {
-				let (mut reader, metadata, mut decoder) = open(entry?.path())?;
-				player.metadata.replace(metadata);
-				while let Ok(packet) = reader.next_packet() {
-					{use symphonia::core::audio::AudioBufferRef::*; match decoder.decode(&packet)? {
-						S32(buffer) => write(device, &mut output, &buffer).await,
-						F32(buffer) => write(device, &mut output, &buffer).await,
-					}}?;
-				}
+	let audio::Output{ref device, mut output} = audio::Output::new()?;
+	let mut object_server = zbus::ObjectServer::new(&dbus);
+	object_server.at(ObjectServer::PATH, Player{device, metadata: default()})?;
+	let mut app = ui::app::App::new(ObjectServer(object_server))?;
+	use futures_lite::stream::{self, StreamExt};
+	app.streams.push(async_io::block_on(dbus.0.stream()).map(|message| (box move |app: &mut ui::app::App<ObjectServer>| { app.widget.0.dispatch_message(&message?)?; Ok(()) }) as Box<dyn FnOnce(&mut _)->Result<()>>).boxed_local());
+	enum YieldAwait<Y, A> { Yield(Y), Await(A) }
+	app.streams.push(stream::try_unfold(|| -> Result<_> {
+		for entry in walkdir::WalkDir::new(".").into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()) {
+			let (mut reader, metadata, mut decoder) = open(entry?.path())?;
+			yield YieldAwait::Yield(metadata);
+			while let Ok(packet) = reader.next_packet() {
+				let buffer = decoder.decode(&packet)?;
+				let write = {use symphonia::core::audio::AudioBufferRef::*; match buffer {
+					S32(buffer) => Box::pin(write(device, &mut output, &buffer)) as std::pin::Pin<Box<dyn core::future::Future<Output=Result<()>>>>,
+					F32(buffer) => Box::pin(write(device, &mut output, &buffer)) as std::pin::Pin<Box<dyn core::future::Future<Output=Result<()>>>>,
+				}};
+				yield YieldAwait::Await(write);
 			}
-			Ok(())
-		})
-	)?
+		}
+		Ok(())
+	}, async move |mut generator| {
+		let item = loop {
+			use std::ops::Generator;
+			match std::pin::Pin::new(&mut generator).resume(()) {
+					std::ops::GeneratorState::Yielded(YieldAwait::Yield(y)) => { break Some(y); },
+					std::ops::GeneratorState::Yielded(YieldAwait::Await(a)) => a.await?,
+					std::ops::GeneratorState::Complete(r) => { r?; break None; },
+			}
+		};
+		Ok(item.map(|item| (item, generator)))
+	})
+	.map(|metadata:Result<_>| (box move |app: &mut ui::app::App<ObjectServer>| {
+		app.widget.with(|o| o.metadata = metadata.unwrap());
+		app.draw()
+	}) as Box<dyn FnOnce(&mut _)->Result<()>>).boxed_local());
+	app.run()
 }
