@@ -59,9 +59,7 @@ impl dbus::message::SignalArgs for OrgMprisMediaPlayer2PlayerSeeked {
     const INTERFACE: &'static str = "org.mpris.MediaPlayer2.Player";
 }
 
-pub fn register_org_mpris_media_player2_player<T>(cr: &mut crossroads::Crossroads) -> crossroads::IfaceToken<T>
-where T: OrgMprisMediaPlayer2Player + Send + 'static
-{
+pub fn register_org_mpris_media_player2_player<T>(cr: &mut crossroads::Crossroads) -> crossroads::IfaceToken<T> where T: OrgMprisMediaPlayer2Player + Send + 'static {
     cr.register("org.mpris.MediaPlayer2.Player", |b| {
         b.signal::<(i64,), _>("Seeked", ("Position",));
         b.method("Next", (), (), |_, t: &mut T, ()| {

@@ -1,37 +1,41 @@
-pub mod media_player2;
-use {fehler::throws, dbus::MethodErr as Error, std::default::default};
-use super::*;
-impl media_player2::OrgMprisMediaPlayer2Player for std::sync::Weak<Player> {
-	#[throws] fn next(&mut self) { dbg!() }
-	#[throws] fn previous(&mut self) {}
-	#[throws] fn pause(&mut self) {}
-	#[throws] fn play_pause(&mut self) { self.upgrade().map(|p| super::toggle_play_pause(&p.device.lock().unwrap()).unwrap()).unwrap() }
-	#[throws] fn stop(&mut self) {}
-	#[throws] fn play(&mut self) {}
-	#[throws] fn seek(&mut self, _offset: i64) {}
-	#[throws] fn set_position(&mut self, _track_id: dbus::Path<'static>, _position: i64) {}
-	#[throws] fn open_uri(&mut self, _uri: String) {}
-	#[throws] fn playback_status(&self) -> String { if let Some(true) = self.upgrade().map(|p| playing(&p.device.lock().unwrap())) { "Playing" } else { "Paused" }.into() }
-	#[throws] fn loop_status(&self) -> String { default() }
-	#[throws] fn set_loop_status(&self, _value: String) {}
-	#[throws] fn rate(&self) -> f64 { default() }
-	#[throws] fn set_rate(&self, _value: f64) {}
-	#[throws] fn shuffle(&self) -> bool { default() }
-	#[throws] fn set_shuffle(&self, _value: bool) {}
-	#[throws] fn metadata(&self) -> dbus::arg::PropMap {
-		self.upgrade().map(|p| p.metadata.lock().unwrap().iter().map(
-			|(k ,v)| (k.clone(), dbus::arg::Variant(Box::new(v.clone()) as Box<dyn dbus::arg::RefArg>))
-		).collect()).unwrap()
-	}
-	#[throws] fn volume(&self) -> f64 { default() }
-	#[throws] fn set_volume(&self, _value: f64) {}
-	#[throws] fn position(&self) -> i64 { default() }
-	#[throws] fn minimum_rate(&self) -> f64 { default() }
-	#[throws] fn maximum_rate(&self) -> f64 { default() }
-	#[throws] fn can_go_next(&self) -> bool { default() }
-	#[throws] fn can_go_previous(&self) -> bool { default() }
-	#[throws] fn can_play(&self) -> bool { default() }
-	#[throws] fn can_pause(&self) -> bool { default() }
-	#[throws] fn can_seek(&self) -> bool { default() }
-	#[throws] fn can_control(&self) -> bool { default() }
+use {fehler::throws, zbus::Error, zbus_macros::dbus_interface, std::default::default};
+struct Player<'t>(&'t super::Player);
+unsafe fn extend_lifetime<'t>(r: Player<'t>) -> Player<'static> { std::mem::transmute::<Player<'t>, Player<'static>>(r) }
+pub struct Drop<'t>(&'t std::cell::RefCell<zbus::ObjectServer>);
+#[throws] pub fn at<'t>(object_server: &'t std::cell::RefCell<zbus::ObjectServer>, player: &'t super::Player) -> Drop<'t> {
+	object_server.borrow_mut().at("/org/mpris/MediaPlayer2", unsafe{extend_lifetime(Player(player))})?;
+	Drop(object_server)
+}
+impl std::ops::Drop for Drop<'_> { fn drop(&mut self) { dbg!(); self.0.borrow_mut().remove::<Player<'static>, _>("/org/mpris/MediaPlayer2").unwrap(); } }
+#[dbus_interface(name= "org.mpris.MediaPlayer2.Player")]
+impl Player<'static> {
+    fn next(&self)  {}
+    fn open_uri(&self, _uri: &str) {}
+    fn pause(&self) {}
+    fn play(&self) {}
+    fn play_pause(&self) {}
+    fn previous(&self) {}
+    fn seek(&self, _offset: i64) {}
+    //fn set_position(&self, _track_id: &zvariant::ObjectPath, _position: i64) {}
+    fn stop(&self) {}
+    #[dbus_interface(signal)] fn seeked(&self, _position: i64) -> zbus::Result<()>;
+    #[dbus_interface(property)] fn can_control(&self) -> bool { false }
+    #[dbus_interface(property)] fn can_go_next(&self) -> bool { false }
+    #[dbus_interface(property)] fn can_go_previous(&self) -> bool { false }
+    #[dbus_interface(property)] fn can_pause(&self) -> bool { false }
+    #[dbus_interface(property)] fn can_play(&self) -> bool { false }
+    #[dbus_interface(property)] fn can_seek(&self) -> bool { false }
+    #[dbus_interface(property)] fn loop_status(&self) -> String { default() }
+    #[dbus_interface(property)] fn set_loop_status(&self, _value: &str) {}
+    #[dbus_interface(property)] fn maximum_rate(&self) -> f64 { 1. }
+    #[dbus_interface(property)] fn metadata(&self) -> std::collections::HashMap<String, zvariant::Value> { dbg!(); default() }
+    #[dbus_interface(property)] fn minimum_rate(&self) -> f64 { 1. }
+    #[dbus_interface(property)] fn playback_status(&self) -> String { dbg!(); default() }
+    #[dbus_interface(property)] fn position(&self) -> f64 { 0. }
+    #[dbus_interface(property)] fn rate(&self) -> f64 { 1. }
+    #[dbus_interface(property)] fn set_rate(&self, _: f64) {}
+    #[dbus_interface(property)] fn shuffle(&self) -> bool { false }
+    #[dbus_interface(property)] fn set_shuffle(&self, _: bool) {}
+    #[dbus_interface(property)] fn volume(&self) -> f64 { 1. }
+    #[dbus_interface(property)] fn set_volume(&self, _: f64) {}
 }

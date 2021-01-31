@@ -26,7 +26,7 @@ impl Output {
 }
 }
 
-#[throws(alsa::Error)] pub fn write(device: &mut alsa::PCM, output: &mut alsa::direct::pcm::MmapPlayback<i16>, frames: &mut impl ExactSizeIterator<Item=(i16, i16)>) -> usize {
+#[throws(alsa::Error)] pub fn write(device: &alsa::PCM, output: &mut alsa::direct::pcm::MmapPlayback<i16>, frames: &mut impl ExactSizeIterator<Item=(i16, i16)>) -> usize {
 	assert!(frames.len() > 0, "{}", frames.len());
 	let (buffer, _) = output.data_ptr();
 	let buffer = unsafe{std::slice::from_raw_parts_mut(buffer.ptr as *mut [i16; 2], buffer.frames as usize)};
