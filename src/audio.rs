@@ -2,7 +2,7 @@ use fehler::throws;
 
 pub struct Output {
 	pub device: alsa::PCM,
-	output: alsa::direct::pcm::MmapPlayback<i16>,
+	pub output: alsa::direct::pcm::MmapPlayback<i16>,
 }
 
 impl Output {
@@ -24,19 +24,18 @@ impl Output {
 	let output = device.direct_mmap_playback::<i16>()?;
 	Self{device, output}
 }
+}
 
-#[throws(alsa::Error)] pub fn write(&mut self, frames: &mut impl ExactSizeIterator<Item=(i16, i16)>) -> usize {
+#[throws(alsa::Error)] pub fn write(device: &mut alsa::PCM, output: &mut alsa::direct::pcm::MmapPlayback<i16>, frames: &mut impl ExactSizeIterator<Item=(i16, i16)>) -> usize {
 	assert!(frames.len() > 0, "{}", frames.len());
-	let (buffer, _) = self.output.data_ptr();
+	let (buffer, _) = output.data_ptr();
 	let buffer = unsafe{std::slice::from_raw_parts_mut(buffer.ptr as *mut [i16; 2], buffer.frames as usize)};
 	assert!(buffer.len() > 0, "{}", buffer.len());
 	let target = buffer.into_iter().zip(frames);
 	let len = target.len();
 	for (target, frame) in target { unsafe{std::ptr::write_volatile(target as *mut [i16; 2], [frame.0, frame.1])}; }
-	self.output.commit(len as alsa::pcm::Frames);
-	if self.output.status().state() == alsa::pcm::State::Prepared { self.device.start()?; }
-	assert!({use alsa::pcm::State::*; matches!(self.output.status().state(), Running|Paused)});
+	output.commit(len as alsa::pcm::Frames);
+	if output.status().state() == alsa::pcm::State::Prepared { device.start()?; }
+	assert!({use alsa::pcm::State::*; matches!(output.status().state(), Running|Paused)});
 	len
-}
-
 }
