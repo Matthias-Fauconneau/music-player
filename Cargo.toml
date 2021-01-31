@@ -19,12 +19,13 @@ image-io= {package='image', version=''}
 image= {git='https://github.com/Matthias-Fauconneau/image'}
 xy= {git='https://github.com/Matthias-Fauconneau/xy'}
 url= ''
+rand= ''
 
 #[patch.'https://github.com/Matthias-Fauconneau/image']
 #image= {path = "../image"}
 
-[patch.'https://github.com/Matthias-Fauconneau/ui']
-ui= {path='../ui'}
+#[patch.'https://github.com/Matthias-Fauconneau/ui']
+#ui= {path='../ui'}
 
 #[patch.'https://gitlab.freedesktop.org/matthias.fauconneau/zbus']
 #zbus= {path='../zbus/zbus'}

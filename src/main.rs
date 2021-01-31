@@ -25,16 +25,16 @@ use symphonia::core::{*, audio::AudioBuffer};
 	let mut metadata = std::collections::HashMap::new();
 	for tag in container.metadata().current().or(file.metadata.current()).unwrap().tags() { if let Some(key) = tag.std_key {
 		let key = {use meta::StandardTagKey::*; match key {
-			Artist|SortArtist => "xesam:artist",
+			Artist|OriginalArtist|SortArtist => "xesam:artist",
 			TrackNumber => "xesam:TrackNumber",
-			OriginalDate|Date => "xesam:contentCreated",
+			Date|OriginalDate => "xesam:contentCreated",
 			Genre => "xesam:genre",
 			Bpm => "xesam:audioBPM",
 			Album => "xesam:album",
-			AlbumArtist => "xesam:albumArtist",
+			AlbumArtist|SortAlbumArtist => "xesam:albumArtist",
 			TrackTitle => "xesam:title",
 			Composer|SortComposer => "xesam:composer",
-			MediaFormat|Language|Lyrics|Label => "",
+			MediaFormat|Language|Lyrics|Label|IdentIsrc|Writer => "",
 			key => panic!("{:?}", key),
 		}};
 		if !key.is_empty() { metadata.insert(key.to_string(), tag.value.clone()); }
@@ -93,8 +93,9 @@ impl ui::widget::Widget for ObjectServer<'_> {
 	zbus::fdo::DBusProxy::new(&dbus)?.request_name("org.mpris.MediaPlayer2.RustMusic", default())?;
 	let audio::Output{ref device, output} = audio::Output::new()?;
 	let ref object_server = RefCell::new(zbus::ObjectServer::new(&dbus));
-	let mut playlist = walkdir::WalkDir::new(".").into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file());
-	let (reader, metadata, decoder) = open(playlist.next().unwrap()?.path())?;
+	let playlist = walkdir::WalkDir::new(".").into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
+	use rand::seq::SliceRandom;
+	let (reader, metadata, decoder) = open(playlist.choose(&mut rand::thread_rng()).unwrap().path())?;
 	let _mpris = mpris::at(object_server, Player{device, metadata})?;
 	let mut app = ui::app::App::new(ObjectServer(object_server))?;
 	use futures_lite::stream::{self, StreamExt};
@@ -102,17 +103,18 @@ impl ui::widget::Widget for ObjectServer<'_> {
 		app.widget.0.borrow_mut().dispatch_message(&message?)?;
 		app.draw()
 	}) as Box<dyn FnOnce(&mut _)->Result<()>>).boxed_local());
-	app.streams.push(stream::try_unfold((output, playlist, (reader, decoder)), async move |(mut output, mut playlist, (mut reader, mut decoder))| {
+	app.streams.push(stream::try_unfold((output, playlist, (reader, decoder)), async move |(mut output, playlist, (mut reader, mut decoder))| {
 		while let Ok(packet) = reader.next_packet() {
 			{use symphonia::core::audio::AudioBufferRef::*; match decoder.decode(&packet)? {
 				S32(buffer) => write(device, &mut output, &buffer).await?,
 				F32(buffer) => write(device, &mut output, &buffer).await?,
 			}};
 		}
-		playlist.next().map(|entry| {
-			let (reader, metadata, decoder) = open(entry?.path())?;
-			Ok((metadata, (output, playlist, (reader, decoder))))
-		}).transpose()
+		let next = if let Some(entry) = playlist.choose(&mut rand::thread_rng()) {
+			let (reader, metadata, decoder) = open(entry.path())?;
+			Some((metadata, (output, playlist, (reader, decoder))))
+		} else { None };
+		Ok(next)
 	})
 	.map(|metadata:Result<_>| (box move |app: &mut ui::app::App<ObjectServer>| {
 		app.widget.with_mut(|o| o.metadata = metadata.unwrap())?;
