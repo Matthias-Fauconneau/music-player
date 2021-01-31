@@ -1,15 +1,14 @@
-use zbus::{dbus_interface, export::*};
-/*use {fehler::throws, zbus::{Error, dbus_interface, export::*}};
-struct Player<'t>(&'t super::Player);
-unsafe fn extend_lifetime<'t>(r: Player<'t>) -> Player<'static> { std::mem::transmute::<Player<'t>, Player<'static>>(r) }
+use {fehler::throws, zbus::{Error, dbus_interface, export::*}};
+use super::Player as Object;
+unsafe fn extend_lifetime<'t>(r: Object<'t>) -> Object<'static> { std::mem::transmute::<Object<'t>, Object<'static>>(r) }
 pub struct Drop<'t>(&'t std::cell::RefCell<zbus::ObjectServer>);
-#[throws] pub fn at<'t>(object_server: &'t std::cell::RefCell<zbus::ObjectServer>, player: &'t super::Player) -> Drop<'t> {
-    object_server.borrow_mut().at("/org/mpris/MediaPlayer2", unsafe{extend_lifetime(Player(player))})?;
+#[throws] pub fn at<'t>(object_server: &'t std::cell::RefCell<zbus::ObjectServer>, object: Object<'t>) -> Drop<'t> {
+    object_server.borrow_mut().at(Object::PATH, unsafe{extend_lifetime(object)})?;
     Drop(object_server)
 }
-impl std::ops::Drop for Drop<'_> { fn drop(&mut self) { self.0.borrow_mut().remove::<Player<'static>, _>("/org/mpris/MediaPlayer2").unwrap(); } }*/
+impl std::ops::Drop for Drop<'_> { fn drop(&mut self) { self.0.borrow_mut().remove::<Object<'static>, _>(Object::PATH).unwrap(); } }
 #[dbus_interface(name= "org.mpris.MediaPlayer2.Player")]
-impl super::Player<'static> {
+impl Object<'static> {
     fn next(&self)  {}
     fn open_uri(&self, _uri: &str) {}
     fn pause(&self) { self.device.pause(true).unwrap(); }
