@@ -63,22 +63,27 @@ impl ObjectServer<'_> {
 
 impl ui::widget::Widget for ObjectServer<'_> {
 	#[throws] fn paint(&mut self, target: &mut ui::widget::Target) {
-		let path = self.with(|o| url::Url::parse(o.metadata.get("mpris:artUrl").unwrap()))??;
+		target.fill(0.into());
+		{let path = self.with(|o| url::Url::parse(o.metadata.get("mpris:artUrl").unwrap()))??;
 		let path = path.to_file_path().map_err(|_| Error::msg(path))?;
 		let image = image_io::io::Reader::open(path)?.decode()?.into_rgb8();
 		let image = image::Image::<&[image::rgb::rgb::<u8>]>::new(image.dimensions().into(), unsafe{image::slice::cast(&image)});
 		let size = ui::text::fit(target.size, image.size);
-		target.fill(0.into());
 		let mut target = target.slice_mut((target.size-size)/2, size);
 		let size = target.size;
-		target.set(|p| image[p*(image.size-1.into())/(size-1.into())].into());
+		target.set(|p| image[p*(image.size-1.into())/(size-1.into())].into());}
+		if !self.with(|o| playing(&o.device))? {
+			let size = std::cmp::min(target.size.x, target.size.y).into();
+			let target = target.slice_mut((target.size-size)/2, size);
+			target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:3}, size/xy{x:5, y:3}).target.fill(0.into());
+			target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:3}, size/xy{x:5, y:3}).target.fill(0.into());
+		}
 	}
 	#[throws] fn event(&mut self, _: ui::widget::size, _: &ui::widget::EventContext, event: &ui::widget::Event) -> bool {
 		match event {
-			ui::widget::Event::Key{key:' '} => self.with(|o| toggle_play_pause(&o.device))??,
-			_ => {}
+			ui::widget::Event::Key{key:' '} => {self.with(|o| toggle_play_pause(&o.device))??; true},
+			_ => false
 		}
-		false
 	}
 }
 
