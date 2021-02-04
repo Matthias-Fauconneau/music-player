@@ -7,7 +7,10 @@ mod mpris;
 use symphonia::core::{*, audio::AudioBuffer};
 #[throws] async fn write<S: sample::Sample>(output: &RefCell<audio::Output>, buffer: &AudioBuffer<S>) where i16: conv::FromSample<S> {
 	let rate = buffer.spec().rate;
-	if output.borrow().device.hw_params_current()?.get_rate()? != rate { take(&mut *output.borrow_mut(), |o|{ drop(o); audio::Output::new(rate).unwrap() }); }
+	if output.borrow().device.hw_params_current()?.get_rate()? != rate {
+		while let Err(err) = output.borrow().device.drain() { if let Some(nix::errno::Errno::EAGAIN) = err.errno() { continue; } else { fehler::throw!(err); } }
+		take(&mut *output.borrow_mut(), |o|{ drop(o); audio::Output::new(rate).unwrap() });
+	}
 	use symphonia::core::audio::Signal;
 	let mut samples = buffer.chan(0).into_iter().map(|&v| conv::FromSample::from_sample(v)).zip(buffer.chan(1).into_iter().map(|&v| conv::FromSample::from_sample(v)));
 	while samples.len() > 0 { output.borrow().write(&mut samples).await?; }
@@ -28,9 +31,9 @@ use symphonia::core::{*, audio::AudioBuffer};
 			Bpm => "xesam:audioBPM",
 			Album|DiscSubtitle => "xesam:album",
 			AlbumArtist|SortAlbumArtist => "xesam:albumArtist",
-			TrackTitle => "xesam:title",
+			TrackTitle|TrackSubtitle => "xesam:title",
 			Composer|SortComposer => "xesam:composer",
-			MediaFormat|Language|Lyrics|Label|IdentIsrc|Writer|Url|Comment|Copyright|Encoder|EncodedBy|TrackTotal|Script|IdentCatalogNumber|Description|ReleaseCountry|DiscNumber|DiscTotal
+			MediaFormat|Language|Lyrics|Label|IdentIsrc|Writer|Url|Comment|Copyright|Encoder|EncodedBy|TrackTotal|Script|IdentCatalogNumber|Description|ReleaseCountry|DiscNumber|DiscTotal|Ensemble|Rating
 			|MusicBrainzAlbumArtistId|MusicBrainzAlbumId|MusicBrainzArtistId|MusicBrainzReleaseGroupId|MusicBrainzReleaseTrackId|MusicBrainzTrackId=> "",
 			key => {println!("{:?}", key); ""},
 		}};
