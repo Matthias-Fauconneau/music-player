@@ -1,23 +1,20 @@
-[package]
-name= 'music-player'
-version= '0.0.0'
-authors= ['Matthias Fauconneau <matthias.fauconneau@gmail.com>']
-edition= '2018'
+package={name='music-player', version='0.0.0', authors=['Matthias Fauconneau <matthias.fauconneau@gmail.com>'], edition= '2021'}
 
 [dependencies]
-anyhow= ''
-fehler= ''
-futures-lite= ''
-futures-util= ''
-walkdir= ''
-alsa= ''
-symphonia= {features= ['mp3'], version= ''}
-ui= {git='https://github.com/Matthias-Fauconneau/ui'}
-async-io= ''
-zbus= {git='https://gitlab.freedesktop.org/matthias.fauconneau/zbus', branch='main'}
-image-io= {package='image', version=''}
+fehler='*'
+anyhow='*'
+async-std={features=['attributes'], version='*'}
+url='*'
+rand='*'
+walkdir='*'
+async-io='*'
+alsa='*'
+symphonia= {features= ['flac','mp3'], version='*'}
+rustix='*'
+ui= {git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
+zbus='*'
 image= {git='https://github.com/Matthias-Fauconneau/image'}
-xy= {git='https://github.com/Matthias-Fauconneau/xy'}
-url= ''
-rand= ''
-nix= '^0.15'
+image-io= {package='image', version='*'}
+
+[patch.'https://github.com/Matthias-Fauconneau/image']
+image={path='../image'}
