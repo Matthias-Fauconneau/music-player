@@ -1,20 +1,25 @@
 package={name='music-player', version='0.0.0', authors=['Matthias Fauconneau <matthias.fauconneau@gmail.com>'], edition= '2021'}
 
 [dependencies]
-fehler='*'
 anyhow='*'
-async-std={features=['attributes'], version='*'}
+#async-std={features=['attributes'], version='*'}
 url='*'
 rand='*'
 walkdir='*'
-async-io='*'
-alsa='*'
-symphonia= {features= ['flac','mp3'], version='*'}
-rustix='*'
-ui= {git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
-zbus='*'
-image= {git='https://github.com/Matthias-Fauconneau/image'}
-image-io= {package='image', version='*'}
+parking_lot='*'
 
-[patch.'https://github.com/Matthias-Fauconneau/image']
-image={path='../image'}
+alsa='*'
+symphonia={features= ['flac','mp3'], version='*'}
+
+rustix='*'
+ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
+fehler='*'
+zbus='*'
+image={git='https://github.com/Matthias-Fauconneau/image'}
+image-io={package='image', version='*'}
+xdg-user='*'
+num={git='https://github.com/Matthias-Fauconneau/num'}
+realfft='*'
+
+[patch.'https://github.com/Matthias-Fauconneau/ui']
+ui={path='../ui'}
