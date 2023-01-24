@@ -14,7 +14,7 @@ symphonia={features= ['flac','mp3'], version='*'}
 rustix='*'
 ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
 fehler='*'
-zbus='*'
+zbus={version='*', optional=true}
 image={git='https://github.com/Matthias-Fauconneau/image'}
 image-io={package='image', version='*'}
 xdg-user='*'

@@ -32,11 +32,11 @@ mod filter {
 use filter::sinc_filter;
 use {std::{cmp::max, sync::Arc}, realfft::{num_complex::Complex, ComplexToReal, RealFftPlanner, RealToComplex}};
 struct Resampler {
-	forward: usize,
+	pub forward: usize,
 	fft: Arc<dyn RealToComplex<f32>>,
     filter: Box<[Complex<f32>]>,
     frequency_domain: Box<[Complex<f32>]>,
-    inverse: usize,
+    pub inverse: usize,
 	ifft: Arc<dyn ComplexToReal<f32>>,
 	scratch: Box<[Complex<f32>]>,
 }
@@ -52,7 +52,7 @@ pub fn new(forward: usize, inverse: usize) -> Self {
 	let scratch = zero(fft.get_scratch_len().max(ifft.get_scratch_len()));
 	Self{forward, fft, frequency_domain: zero(max(forward,inverse)+1), filter, inverse, ifft, scratch}
 }
-fn resample<'t>(&mut self, mut time_domain: &'t mut [f32], previous_time_domain: &'t [f32]) -> impl ExactSizeIterator<Item=f32>+'t {
+pub fn resample<'t>(&mut self, mut time_domain: &'t mut [f32], previous_time_domain: &'t [f32]) -> impl ExactSizeIterator<Item=f32>+'t {
     let mut input = &mut time_domain[..self.forward*2];
     input[self.forward..].fill(0.);
     self.fft.process_with_scratch(&mut input, &mut self.frequency_domain[..self.forward+1], &mut self.scratch).unwrap();
@@ -69,6 +69,9 @@ pub struct MultiResampler {
     time_domain0: Box<[f32]>, time_domain1: Box<[f32]>,
     overflow: usize,
 }
+//pub trait Decoder<Packet> { type Channel<'t> where Self: 't; fn decode(&mut self, _: &Packet) -> [Self::Channel<'_>; 2]; }
+pub trait Decoder<Packet> { type Buffer<'t> where Self: 't; fn decode(&mut self, _: &Packet) -> Self::Buffer<'_>; }
+pub trait SplitConvert<T> { type Channel<'t>: ExactSizeIterator<Item=T>+'t where Self: 't; fn split_convert<'t>(&'t self) -> [Self::Channel<'t>; 2]; }
 impl MultiResampler {
 pub fn new(input: u32, output: u32) -> Option<Self> {
     (input != output).then(|| {
@@ -80,22 +83,16 @@ pub fn new(input: u32, output: u32) -> Option<Self> {
         Self{resampler: Resampler::new(forward, inverse), previous_time_domain0, previous_time_domain1, time_domain0, time_domain1, overflow: 0}
     })
 }
-pub fn resample<'b, 'i, P: Iterator, T, B: 'b, I:ExactSizeIterator<Item=f32>+'i>(&mut self,
-    ref mut packets: &mut P,
-    //convert: impl Fn(&P::Item)->[impl ExactSizeIterator<Item=f32>; 2]
-    mut decode: impl FnMut(&P::Item) -> T,
-    upcast: impl Fn(&T) -> B,
-    convert: impl for<'bo> Fn(&'bo B) -> [I; 2] 
-) -> Option<[impl ExactSizeIterator<Item=f32>+'_; 2]> {
+pub fn resample<Packets: Iterator, D: Decoder<Packets::Item>>(&mut self, ref mut packets: &mut Packets, decoder: &mut D) -> Option<[impl ExactSizeIterator<Item=f32>+'_; 2]>
+where for<'t> D::Buffer<'t>: SplitConvert<f32> {
     std::mem::swap(&mut self.previous_time_domain0, &mut self.time_domain0); std::mem::swap(&mut self.previous_time_domain1, &mut self.time_domain1);
     let mut filled = self.overflow; // previous time domain (for overlap-add) might also be used to store the remainder of the input packet
     while filled < self.resampler.forward {
         let packet = packets.next()?;
-        let buffer = decode(&packet);
-        let buffer = upcast(&buffer);
-        let mut buffer = convert(&buffer);
-        filled += collect(&mut self.time_domain0[filled..], &mut buffer[0]); collect(&mut self.time_domain1[filled..], &mut buffer[1]);
-        self.overflow = collect(&mut self.previous_time_domain0, &mut buffer[0]); collect(&mut self.previous_time_domain1, &mut buffer[1]);
+        let buffer = decoder.decode(&packet);
+        let mut iter = buffer.split_convert();
+        filled += collect(&mut self.time_domain0[filled..], &mut iter[0]); collect(&mut self.time_domain1[filled..], &mut iter[1]);
+        self.overflow = collect(&mut self.previous_time_domain0, &mut iter[0]); collect(&mut self.previous_time_domain1, &mut iter[1]);
         assert!(self.overflow < self.resampler.inverse) // previous_time_domain[inverse..] is already used to store overlap to be added for overlap-add
         // previous_time_domain will become time_domain next time
     }

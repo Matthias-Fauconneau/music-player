@@ -1,6 +1,6 @@
-use {fehler::throws, alsa::{Result, PCM, direct::pcm::{MmapPlayback, RawSamples}, pcm::{HwParams,Format,Access,Frames,State}, ValueOr}};
+use {fehler::throws, alsa::{PCM, direct::pcm::{MmapPlayback, RawSamples}, pcm::{HwParams,Format,Access,Frames,State}, ValueOr}};
 pub use alsa::Error;
-//pub type Result<T=()> = alsa::Result<T>;
+pub type Result<T=()> = alsa::Result<T>;
 
 pub struct Output {
 	pub device: PCM,

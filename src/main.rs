@@ -1,7 +1,7 @@
-#![feature(default_free_fn, try_blocks, exact_size_is_empty, trait_alias, let_chains, associated_type_bounds, array_zip, array_methods, anonymous_lifetime_in_impl_trait)]
+#![feature(default_free_fn, try_blocks, exact_size_is_empty, trait_alias, let_chains, associated_type_bounds, array_zip, array_methods, type_alias_impl_trait)]
 #![allow(mixed_script_confusables)]
 mod audio;
-mod mpris;
+#[cfg(feature="zbus")] mod mpris;
 mod resampler;
 
 use {ui::*, std::default::default, symphonia::core::{formats, codecs, meta}};
@@ -36,9 +36,9 @@ fn open(path: &std::path::Path) -> Result<(Box<dyn formats::FormatReader>, std::
 	Ok((container, metadata, decoder))
 }
 
-use audio::{Output as Audio, Write as _};
+use audio::{Output, Write as _};
 #[derive(Default)] pub struct Player {
-	audio: Audio,
+	output: Output,
 	metadata: std::collections::HashMap<String, String>,
 }
 
@@ -70,7 +70,7 @@ impl Widget for Player {
 			target.set(|p| image[p*(image.size-size::from(1))/(size-size::from(1))].g as u32);
 			//target.set(|p| u32::from(image[p*(image.size-size::from(1))/(size-size::from(1))]));
 		};
-		if !self.audio.playing() {
+		if !self.output.playing() {
 			let size = std::cmp::min(target.size.x, target.size.y).into();
 			let mut target = target.slice_mut((target.size-size)/2, size);
 			use image::xy;
@@ -80,7 +80,7 @@ impl Widget for Player {
 	}
 	#[throws] fn event(&mut self, _: size, _: &mut EventContext, event: &Event) -> bool {
 		match event {
-			Event::Key(' ') => { self.audio.toggle_play_pause()?; true },
+			Event::Key(' ') => { self.output.toggle_play_pause()?; true },
 			_ => false
 		}
 	}
@@ -89,7 +89,7 @@ impl Widget for Player {
 //#[async_std::main]
 /*async*/ fn main() -> Result {
 	let mut player : Arch<Player> = default();
-	let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(false).build(); //.await? TODO: poll
+	#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(false).build(); //.await? TODO: poll
 	std::thread::spawn({let player : Arch<Player> = Arch::clone(&player); move || Result::<()>::unwrap(try {
 		let playlist = walkdir::WalkDir::new(std::env::args().skip(1).next().map(|s| s.into()).unwrap_or(xdg_user::music()?.unwrap_or_default())).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
 		let playlist = std::iter::from_fn(move || loop {
@@ -100,57 +100,60 @@ impl Widget for Player {
 				if let Ok(next) = open(path) { break Some(next); }
 			} else { break None; }
 		});
-		for (mut reader, metadata, mut decoder) in playlist {
+		for (mut reader, metadata, decoder) in playlist {
 			player.lock().metadata = metadata; // TODO: eventfd channel to UI poll to trigger UI update on metadata change
 			type Resampler = resampler::MultiResampler;
-			let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player.lock().audio.device.hw_params_current()?.get_rate()?);
-			use symphonia::core::{sample, conv, formats::Packet};
-			//trait Decoder { fn decode(&mut self, _: &Packet) -> AudioBufferRef; }
-			#[throws(alsa::Error)] fn write<MutexGuard: std::ops::Deref<Target=Audio>, S: sample::Sample+'static, T>(
-				ref audio: impl Fn() -> MutexGuard,
-				resampler: &mut Option<Resampler>,
-				//packets: impl Iterator<Item=Buffer<S>>
-				ref mut packets: impl Iterator<Item=Packet>,
-				ref mut decode: impl FnMut(&Packet) -> T,
-				ref upcast: impl Fn(&T) -> std::borrow::Cow<'_, Buffer<S>>,
-				//packets: impl Iterator<Item=[impl ExactSizeIterator<Item=S>; 2]>)
-				) where f32: conv::FromSample<S>, i16: conv::FromSample<S> {
-
-				/*fn from_sample<S,T>(packets: impl Iterator<Item=[impl ExactSizeIterator<Item=S>; 2]>) -> impl Iterator<Item=[impl ExactSizeIterator<Item=T>; 2]>
-				where T: conv::FromSample<S> { packets.map(|packet| packet.map(|channel| channel.map(|v| conv::FromSample::from_sample(v)))) }*/
-
-				fn convert<'b: 'bo, 'bo: 'i, 'i, S:Sample,T>(packet: &'bo std::borrow::Cow<'b, Buffer<S>>) -> [impl ExactSizeIterator<Item=T>+'i; 2]
-				where T: conv::FromSample<S> { [0,1].map(|channel| packet.chan(channel).iter().map(|&v| conv::FromSample::from_sample(v))) }
-
-				/*fn from_sample<'t, S:Sample+'t,T>(packets: impl Iterator<Item=&'t Buffer<S>>) -> impl Iterator<Item=[impl ExactSizeIterator<Item=T>+'t; 2]>
-				where T: conv::FromSample<S> { packets.map(|packet| [0,1].map(|channel| packet.chan(channel).iter().map(|&v| conv::FromSample::from_sample(v)))) }*/
-
-				if let Some(resampler) = resampler {
-					while let Some([L, R]) = resampler.resample(packets, &mut *decode, upcast, convert) {
+			let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player.lock().output.device.hw_params_current()?.get_rate()?);
+			use {std::borrow::Cow, symphonia::core::{formats::Packet, audio::{AudioBufferRef, AudioBuffer, Signal as _}, sample::{self, Sample, SampleFormat}, conv}};
+			trait Cast<'t, S:Sample> { fn cast(self) -> Cow<'t, AudioBuffer<S>>; }
+			impl<'t> Cast<'t, i32> for AudioBufferRef<'t> { fn cast(self) -> Cow<'t, AudioBuffer<i32>> { if let AudioBufferRef::S32(variant) = self  { variant } else { unreachable!() } } }
+			impl<'t> Cast<'t, f32> for AudioBufferRef<'t> { fn cast(self) -> Cow<'t, AudioBuffer<f32>> { if let AudioBufferRef::F32(variant) = self  { variant } else { unreachable!() } } }
+			use resampler::SplitConvert;
+			impl<S:Sample, T:conv::FromSample<S>> SplitConvert<T> for std::borrow::Cow<'_, AudioBuffer<S>> {
+				type Channel<'t> = impl ExactSizeIterator<Item=T>+'t where Self: 't;
+				fn split_convert<'t>(&'t self) -> [Self::Channel<'t>; 2]  { [0,1].map(move |channel| self.chan(channel).iter().map(|&v| conv::FromSample::from_sample(v))) }
+			}
+			struct Decoder<D,S>(D, std::marker::PhantomData<S>);
+			//impl<D: codecs::Decoder, S:Sample+'static> resampler::Decoder<Packet> for Decoder<Box<dyn D>, S> where
+			impl<S:Sample+'static> resampler::Decoder<Packet> for Decoder<Box<dyn codecs::Decoder>, S> where
+				for<'t> AudioBufferRef<'t>: Cast<'t, S> {
+				//for<'t> std::borrow::Cow<'t, AudioBuffer<S>>: SplitConvert<'t, T> {
+				type Buffer<'t> = Cow<'t, AudioBuffer<S>> where Self: 't;
+				//type Channel<'t> = impl ExactSizeIterator<Item=T>+'t where Self: 't;
+				fn decode(&mut self, packet: &Packet) -> Self::Buffer<'_> { self.0.decode(packet).unwrap().cast() }
+				//fn decode(&mut self, packet: &Packet) -> Self::Buffer<'_> { codecs::Decoder::decode(self.0, packet).unwrap().cast() }
+				//fn decode(&mut self, packet: &Packet) -> [Self::Channel<'_>; 2] { codecs::Decoder::decode(self.0, packet).unwrap().cast() }
+			}
+			fn write
+			<S: sample::Sample+'static, D, Output: std::ops::Deref<Target=self::Output>>
+			(resampler: &mut Option<Resampler>, ref mut packets: impl Iterator<Item=Packet>, decoder: D, ref output: impl Fn() -> Output) -> audio::Result
+				where Decoder<D, S>: resampler::Decoder<Packet>,
+				for <'t> <Decoder<D, S> as resampler::Decoder<Packet>>::Buffer<'t>: SplitConvert<f32>,
+				for <'t> <Decoder<D, S> as resampler::Decoder<Packet>>::Buffer<'t>: SplitConvert<i16> {
+				if let Some(resampler) = resampler.as_mut() {
+					let mut decoder = Decoder(decoder, std::marker::PhantomData);
+					while let Some([L, R]) = resampler.resample(packets, &mut decoder) {
 						let f32_to_i16 = |s| { (f32::clamp(s, -1., 1.) * 32768.) as i16 };
-						audio.write(L.map(f32_to_i16).zip(R.map(f32_to_i16)))?;
+						output.write(L.map(f32_to_i16).zip(R.map(f32_to_i16)))?;
 					}
 				} else {
-					for packet in packets { let buffer = decode(&packet); let buffer = upcast(&buffer); let [L, R] = convert(&buffer); audio.write(L.zip(R))?; }
+					let mut decoder = Decoder(decoder, std::marker::PhantomData);
+					for ref packet in packets {
+						let ref buffer = resampler::Decoder::decode(&mut decoder, packet);
+						let [L, R] = SplitConvert::<i16>::split_convert(buffer);
+						//let [L, R] : [<<Decoder<D,S> as resampler::Decoder::<Packet>>::Buffer<'_> as SplitConvert<i16>>::Channel<'_>; 2]= buffer.split_convert();
+						output.write(L.zip(R))?;
+					}
 				}
+				Ok(())
 			}
-			let audio = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.audio);
+			let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
 			let packets = std::iter::from_fn(|| reader.next_packet().ok());
 			let sample_format = decoder.codec_params().sample_format.unwrap();
-			let decode = move |packet| decoder.decode(packet).unwrap();
-			/*impl FnMut(Packet) -> T for Decoder {
-				decoder.decode(&packet).unwrap();
-			}*/
-			//let packets = std::iter::from_fn(|| reader.next_packet().map(|packet| decoder.decode(&packet).unwrap()).ok());
-			use symphonia::core::{sample::Sample, audio::{AudioBuffer as Buffer, Signal as _}, sample::SampleFormat};
-			//fn iter<'t, S:Sample+'t>(buffer: &'t Buffer<S>) -> [impl ExactSizeIterator<Item=S>+'t; 2] { [0,1].map(|channel| buffer.chan(channel).into_iter().copied()) }
 			// TODO: fade out and return on UI quit
-			use symphonia::core::audio::AudioBufferRef;
 			match sample_format {
-				SampleFormat::S32 => write(audio, resampler, packets, decode, |buffer| if let AudioBufferRef::S32(b) = buffer { std::borrow::Cow::Borrowed(b) } else { unreachable!() }),
-				SampleFormat::F32 => write(audio, resampler, packets, decode, |buffer| if let AudioBufferRef::F32(b) = buffer { std::borrow::Cow::Borrowed(b) } else { unreachable!() }),
-				/*SampleFormat::S32 => write(audio, resampler, packets.map(|packet| if let AudioBufferRef::S32(p) = packet { iter(p) } else { unreachable!() })),
-				SampleFormat::F32 => write(audio, resampler, packets.map(|packet| if let AudioBufferRef::F32(p) = packet { iter(p) } else { unreachable!() })),*/
+				SampleFormat::S32 => write::<i32, _, _>(resampler, packets, decoder, output),
+				SampleFormat::F32 => write::<f32, _, _>(resampler, packets, decoder, output),
 				_ => unimplemented!(),
 			}?
 		}
