@@ -100,7 +100,7 @@ impl Widget for Player {
 				if let Ok(next) = open(path) { break Some(next); }
 			} else { break None; }
 		});
-		for (mut reader, metadata, decoder) in playlist {
+		for (mut reader, metadata, mut decoder) in playlist {
 			player.lock().metadata = metadata; // TODO: eventfd channel to UI poll to trigger UI update on metadata change
 			type Resampler = resampler::MultiResampler;
 			let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player.lock().output.device.hw_params_current()?.get_rate()?);
@@ -130,11 +130,16 @@ impl Widget for Player {
 				where Decoder<D, S>: resampler::Decoder<Packet>,
 				for <'t> <Decoder<D, S> as resampler::Decoder<Packet>>::Buffer<'t>: SplitConvert<f32>,
 				for <'t> <Decoder<D, S> as resampler::Decoder<Packet>>::Buffer<'t>: SplitConvert<i16> {
+					#![allow(non_snake_case)]
 				if let Some(resampler) = resampler.as_mut() {
 					let mut decoder = Decoder(decoder, std::marker::PhantomData);
 					while let Some([L, R]) = resampler.resample(packets, &mut decoder) {
-						let f32_to_i16 = |s| { (f32::clamp(s, -1., 1.) * 32768.) as i16 };
-						output.write(L.map(f32_to_i16).zip(R.map(f32_to_i16)))?;
+						let (mut min, mut max) = (0f32, 0f32);
+						let f32_to_i16_dbg = |s| { min=min.min(s); max=max.max(s); (f32::clamp(s, -1., 1.) * 32768.) as i16 };
+						let f32_to_i16 = |s| 0; //(f32::clamp(s, -1., 1.) * 32768.) as i16;
+						output.write(L.map(f32_to_i16_dbg).zip(R.map(f32_to_i16)))?;
+						//println!("{min} {max}");
+						assert!(min >= -1. && max <= 1.);
 					}
 				} else {
 					let mut decoder = Decoder(decoder, std::marker::PhantomData);
@@ -148,8 +153,12 @@ impl Widget for Player {
 				Ok(())
 			}
 			let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
-			let packets = std::iter::from_fn(|| reader.next_packet().ok());
-			let sample_format = decoder.codec_params().sample_format.unwrap();
+			let mut packets = std::iter::from_fn(|| reader.next_packet().ok());
+			let sample_format = decoder.codec_params().sample_format.unwrap_or_else(|| match decoder.decode(&packets.next().unwrap()).unwrap() {
+				AudioBufferRef::S32(_) => dbg!(SampleFormat::S32),
+				AudioBufferRef::F32(_) => dbg!(SampleFormat::F32),
+				_ => unimplemented!(),
+			});
 			// TODO: fade out and return on UI quit
 			match sample_format {
 				SampleFormat::S32 => write::<i32, _, _>(resampler, packets, decoder, output),
