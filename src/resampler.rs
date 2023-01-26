@@ -79,7 +79,7 @@ pub fn new(input: u32, output: u32) -> Option<Self> {
         fn gcd(mut a: u32, mut b: u32) -> u32 { while b != 0 { (a,b) = (b, a % b) } a }
         let gcd = gcd(input, output);
         let [forward, inverse] = [(input/gcd) as usize, (output/gcd) as usize];
-        let [forward, inverse] = {let mut i = 1; loop { if inverse*i >= 4122 { break [forward*i, inverse*i]; } i += 1; }};
+        let [forward, inverse] = {let mut i = 1; loop { if inverse*i >= 4370 { break [forward*i, inverse*i]; } i += 1; }};
         let [previous_time_domain0, previous_time_domain1] = [(); 2].map(|_| zero(max(forward,inverse)*2));
         let [time_domain0, time_domain1] = [(); 2].map(|_| zero(max(forward,inverse)*2));
         Self{resampler: Resampler::new(forward, inverse), previous_time_domain0, previous_time_domain1, time_domain0, time_domain1, overflow: 0}
@@ -88,18 +88,20 @@ pub fn new(input: u32, output: u32) -> Option<Self> {
 pub fn resample<Packets: Iterator, D: Decoder<Packets::Item>>(&mut self, ref mut packets: &mut Packets, decoder: &mut D) -> Option<[impl ExactSizeIterator<Item=f32>+'_; 2]>
 where for<'t> D::Buffer<'t>: SplitConvert<f32> {
     std::mem::swap(&mut self.previous_time_domain0, &mut self.time_domain0); std::mem::swap(&mut self.previous_time_domain1, &mut self.time_domain1);
-    let mut filled = self.overflow; // previous time domain (for overlap-add) might also be used to store the remainder of the input packet
-    loop {
-        let packet = packets.next()?;
-        let buffer = decoder.decode(&packet);
-        let mut iter = buffer.split_convert();
-        filled += {collect(&mut self.time_domain0[filled..self.resampler.forward], &mut iter[0]); collect(&mut self.time_domain1[filled..self.resampler.forward], &mut iter[1])};
-        if filled < self.resampler.forward { assert!(iter[0].is_empty()); assert!(iter[1].is_empty()); continue; }
-        assert!(filled == self.resampler.forward);
-        self.overflow = {collect(&mut self.previous_time_domain0, &mut iter[0]); collect(&mut self.previous_time_domain1, &mut iter[1])};
-        assert!(self.overflow <= self.resampler.inverse, "overflow: {} inverse: {}", self.overflow, self.resampler.inverse); // previous_time_domain[inverse..] is already used to store overlap to be added for overlap-add
-        // previous_time_domain will become time_domain next time
-        break;
+    if self.overflow < self.resampler.forward {
+        let mut filled = self.overflow; // previous time domain (for overlap-add) is also be used to store the remainder of the input packet ([0..inverse] is unused)
+        loop {
+            let packet = packets.next()?;
+            let buffer = decoder.decode(&packet);
+            let mut iter = buffer.split_convert();
+            filled += {collect(&mut self.time_domain0[filled..self.resampler.forward], &mut iter[0]); collect(&mut self.time_domain1[filled..self.resampler.forward], &mut iter[1])};
+            if filled < self.resampler.forward { assert!(iter[0].is_empty()); assert!(iter[1].is_empty()); continue; }
+            assert!(filled == self.resampler.forward);
+            self.overflow = {collect(&mut self.previous_time_domain0, &mut iter[0]); collect(&mut self.previous_time_domain1, &mut iter[1])};
+            assert!(self.overflow <= self.resampler.inverse, "overflow: {} inverse: {}", self.overflow, self.resampler.inverse); // previous_time_domain[inverse..] is already used to store overlap to be added for overlap-add
+            // previous_time_domain will become time_domain next time
+            break;
+        }
     }
     Some([self.resampler.resample(&mut self.time_domain0, &self.previous_time_domain0), self.resampler.resample(&mut self.time_domain1, &self.previous_time_domain1)])
 }
