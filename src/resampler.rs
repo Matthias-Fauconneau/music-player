@@ -43,7 +43,8 @@ struct Resampler {
 impl Resampler {
 pub fn new(forward: usize, inverse: usize) -> Self {
 	assert!(forward < inverse); // Upsampling
-	let cutoff = 0.4f64.powf(16. / forward as f64); //?
+	let cutoff = 0.4f64.powf(128. / forward as f64); //?
+    assert!(cutoff <= 0.975,"{forward} {cutoff}");
 	let mut planner = RealFftPlanner::<f32>::new();
 	let fft = planner.plan_fft_forward(2 * forward);
 	let mut filter = zero(forward+1);

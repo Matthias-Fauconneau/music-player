@@ -134,19 +134,14 @@ impl Widget for Player {
 				if let Some(resampler) = resampler.as_mut() {
 					let mut decoder = Decoder(decoder, std::marker::PhantomData);
 					while let Some([L, R]) = resampler.resample(packets, &mut decoder) {
-						let (mut min, mut max) = (0f32, 0f32);
-						let f32_to_i16_dbg = |s| { min=min.min(s); max=max.max(s); (f32::clamp(s, -1., 1.) * 32768.) as i16 };
-						let f32_to_i16 = |s| 0; //(f32::clamp(s, -1., 1.) * 32768.) as i16;
-						output.write(L.map(f32_to_i16_dbg).zip(R.map(f32_to_i16)))?;
-						//println!("{min} {max}");
-						assert!(min >= -1. && max <= 1.);
+						let f32_to_i16 = |s| f32::clamp(s*32768., -32768., 32767.) as i16;
+						output.write(L.map(f32_to_i16).zip(R.map(f32_to_i16)))?;
 					}
 				} else {
 					let mut decoder = Decoder(decoder, std::marker::PhantomData);
 					for ref packet in packets {
 						let ref buffer = resampler::Decoder::decode(&mut decoder, packet);
 						let [L, R] = SplitConvert::<i16>::split_convert(buffer);
-						//let [L, R] : [<<Decoder<D,S> as resampler::Decoder::<Packet>>::Buffer<'_> as SplitConvert<i16>>::Channel<'_>; 2]= buffer.split_convert();
 						output.write(L.zip(R))?;
 					}
 				}
@@ -155,8 +150,8 @@ impl Widget for Player {
 			let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
 			let mut packets = std::iter::from_fn(|| reader.next_packet().ok());
 			let sample_format = decoder.codec_params().sample_format.unwrap_or_else(|| match decoder.decode(&packets.next().unwrap()).unwrap() {
-				AudioBufferRef::S32(_) => dbg!(SampleFormat::S32),
-				AudioBufferRef::F32(_) => dbg!(SampleFormat::F32),
+				AudioBufferRef::S32(_) => SampleFormat::S32,
+				AudioBufferRef::F32(_) => SampleFormat::F32,
 				_ => unimplemented!(),
 			});
 			// TODO: fade out and return on UI quit
