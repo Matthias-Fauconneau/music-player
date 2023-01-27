@@ -1,25 +1,33 @@
 package={name='music-player', version='0.0.0', authors=['Matthias Fauconneau <matthias.fauconneau@gmail.com>'], edition= '2021'}
 
 [dependencies]
+fehler='*'
 anyhow='*'
-#async-std={features=['attributes'], version='*'}
 url='*'
 rand='*'
+rustix='*'
 walkdir='*'
 parking_lot='*'
 
 alsa='*'
 symphonia={features= ['flac','mp3'], version='*'}
 
-rustix='*'
-ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
-fehler='*'
-zbus={version='*', optional=true}
-image={git='https://github.com/Matthias-Fauconneau/image'}
-image-io={package='image', version='*'}
-xdg-user='*'
 num={git='https://github.com/Matthias-Fauconneau/num'}
 realfft='*'
+
+ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
+
+image={git='https://github.com/Matthias-Fauconneau/image'}
+image-io={package='image', version='*'}
+
+zbus={version='*', optional=true}
+async-std={features=['attributes'], version='*', optional=true}
+
+xdg-user='*'
+
+[features]
+zbus=['dep:zbus','async-std']
+default=['zbus']
 
 #[patch.'https://github.com/Matthias-Fauconneau/vector']
 #vector={path='../vector'}

@@ -92,10 +92,10 @@ impl Widget for Player {
 	}
 }
 
-//#[async_std::main]
-/*async*/ fn main() -> Result {
+#[async_std::main]
+async fn main() -> Result {
 	let mut player : Arch<Player> = default();
-	#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(false).build(); //.await? TODO: poll
+	#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(true).build().await?;
 	let ref app = App::new()?;
 	thread::scope(|s| {
 		thread::Builder::new().spawn_scoped(s, {let player : Arch<Player> = Arch::clone(&player); move || Result::<()>::unwrap(try {

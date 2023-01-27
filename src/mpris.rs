@@ -3,9 +3,9 @@ use zbus::{dbus_interface, zvariant::{ObjectPath,Value}}; //Result
 impl super::Arch<super::Player> {
     fn next(&self)  {}
     fn open_uri(&self, _uri: &str) {}
-    fn pause(&self) { self.lock().audio.device.pause(true).unwrap(); }
-    fn play(&self) { self.lock().audio.device.pause(false).unwrap(); }
-    fn play_pause(&self) { self.lock().audio.toggle_play_pause().unwrap(); }
+    fn pause(&self) { self.lock().output.device.pause(true).unwrap(); }
+    fn play(&self) { self.lock().output.device.pause(false).unwrap(); }
+    fn play_pause(&self) { self.lock().output.toggle_play_pause().unwrap(); }
     fn previous(&self) {}
     fn seek(&self, _offset: i64) {}
     fn set_position(&self, _track_id: ObjectPath, _position: i64) {}
@@ -14,7 +14,7 @@ impl super::Arch<super::Player> {
     #[dbus_interface(property)] fn can_control(&self) -> bool { true }
     #[dbus_interface(property)] fn can_go_next(&self) -> bool { false }
     #[dbus_interface(property)] fn can_go_previous(&self) -> bool { false }
-    #[dbus_interface(property)] fn can_pause(&self) -> bool { self.lock().audio.playing() }
+    #[dbus_interface(property)] fn can_pause(&self) -> bool { self.lock().output.playing() }
     #[dbus_interface(property)] fn can_play(&self) -> bool { true }
     #[dbus_interface(property)] fn can_seek(&self) -> bool { false }
     #[dbus_interface(property)] fn loop_status(&self) -> String { "None".into() }
@@ -24,7 +24,7 @@ impl super::Arch<super::Player> {
         self.lock().metadata.iter().map(|(k ,v)| (k.clone(), v.to_owned().into())).collect()
     }
     #[dbus_interface(property)] fn minimum_rate(&self) -> f64 { 1. }
-    #[dbus_interface(property)] fn playback_status(&self) -> String { if self.lock().audio.playing() {"Playing"} else {"Paused"}.into()  }
+    #[dbus_interface(property)] fn playback_status(&self) -> String { if self.lock().output.playing() {"Playing"} else {"Paused"}.into()  }
     #[dbus_interface(property)] fn position(&self) -> f64 { 0. }
     #[dbus_interface(property)] fn rate(&self) -> f64 { 1. }
     #[dbus_interface(property)] fn set_rate(&self, _: f64) {}
