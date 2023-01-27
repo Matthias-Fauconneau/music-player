@@ -1,4 +1,4 @@
-#![feature(default_free_fn, try_blocks, exact_size_is_empty, trait_alias, let_chains, associated_type_bounds, array_zip, array_methods, type_alias_impl_trait)]
+#![feature(default_free_fn, try_blocks, exact_size_is_empty, trait_alias, let_chains, associated_type_bounds, array_zip, array_methods, type_alias_impl_trait, result_option_inspect)]
 #![allow(mixed_script_confusables)]
 mod audio;
 #[cfg(feature="zbus")] mod mpris;
@@ -61,7 +61,6 @@ impl<T:Widget> Widget for Arch<T> {
 
 impl Widget for Player {
 	#[throws] fn paint(&mut self, target: &mut Target, size: size, _: int2) {
-		target.fill(background.into());
 		let _ : Result<()> = try {
 			let path = url::Url::parse(self.metadata.get("mpris:artUrl").ok_or("Missing cover")?)?;
 			let path = path.to_file_path().expect("Expecting local cover");
@@ -76,12 +75,14 @@ impl Widget for Player {
 			let size = std::cmp::min(target.size.x, target.size.y).into();
 			let mut target = target.slice_mut((target.size-size)/2, size);
 			use image::xy;
-			image::invert(&mut target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}), true.into());
-			image::invert(&mut target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}), true.into());
+			target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}).fill(white.into());
+			target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}).fill(white.into());
 		}
-		let mut text = text(self.title()?, &[]);
-		let text_size = fit(size, text.size());
-		text.paint_fit(target, target.size, xy{x: 0, y: (size.y as i32-text_size.y as i32)/2});
+		if !self.metadata.is_empty() {
+			let mut text = text(self.title().expect(&format!("{:?}",self.metadata)), &[]);
+			let text_size = fit(size, text.size());
+			text.paint_fit(target, target.size, xy{x: 0, y: (size.y as i32-text_size.y as i32)/2});
+		}
 	}
 	#[throws] fn event(&mut self, _: size, ctx: &mut EventContext, event: &Event) -> bool {
 		match event {
@@ -95,9 +96,11 @@ impl Widget for Player {
 #[async_std::main]
 async fn main() -> Result {
 	let mut player : Arch<Player> = default();
-	#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(true).build().await?;
+	//#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(true).build().await?;
 	let ref app = App::new()?;
 	thread::scope(|s| {
+		use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+		let stop = AtomicBool::new(false);
 		thread::Builder::new().spawn_scoped(s, {let player : Arch<Player> = Arch::clone(&player); move || Result::<()>::unwrap(try {
 			let playlist = walkdir::WalkDir::new(std::env::args().skip(1).next().map(|s| s.into()).unwrap_or(xdg_user::music()?.unwrap_or_default())).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
 			let playlist = std::iter::from_fn(move || loop {
@@ -152,20 +155,20 @@ async fn main() -> Result {
 					Ok(())
 				}
 				let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
-				let mut packets = std::iter::from_fn(|| reader.next_packet().ok());
+				let mut packets = std::iter::from_fn(|| (!stop.load(Relaxed)).then(|| reader.next_packet().ok()).flatten()); // TODO: fade out
 				let sample_format = decoder.codec_params().sample_format.unwrap_or_else(|| match decoder.decode(&packets.next().unwrap()).unwrap() {
 					AudioBufferRef::S32(_) => SampleFormat::S32,
 					AudioBufferRef::F32(_) => SampleFormat::F32,
 					_ => unimplemented!(),
 				});
-				// TODO: fade out and return on UI quit
 				match sample_format {
 					SampleFormat::S32 => write::<i32, _, _>(resampler, packets, decoder, output),
 					SampleFormat::F32 => write::<f32, _, _>(resampler, packets, decoder, output),
 					_ => unimplemented!(),
-				}?
+				}?;
+				if stop.load(Relaxed) { break; }
 			}
 		})})?;
-		app.run("Player", &mut player)
+		app.run("Player", &mut player).inspect_err(|e| println!("{e:?}"))
 	})
 }
