@@ -21,5 +21,7 @@ xdg-user='*'
 num={git='https://github.com/Matthias-Fauconneau/num'}
 realfft='*'
 
+#[patch.'https://github.com/Matthias-Fauconneau/vector']
+#vector={path='../vector'}
 #[patch.'https://github.com/Matthias-Fauconneau/ui']
 #ui={path='../ui'}

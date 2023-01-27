@@ -43,7 +43,7 @@ struct Resampler {
 impl Resampler {
 pub fn new(forward: usize, inverse: usize) -> Self {
 	assert!(forward < inverse); // Upsampling
-	let cutoff = 0.4f64.powf(128. / forward as f64); //?
+	let cutoff = 0.4f64.powf(256. / forward as f64); //?
     assert!(cutoff <= 0.975,"{forward} {cutoff}");
 	let mut planner = RealFftPlanner::<f32>::new();
 	let fft = planner.plan_fft_forward(2 * forward);
@@ -79,7 +79,7 @@ pub fn new(input: u32, output: u32) -> Option<Self> {
         fn gcd(mut a: u32, mut b: u32) -> u32 { while b != 0 { (a,b) = (b, a % b) } a }
         let gcd = gcd(input, output);
         let [forward, inverse] = [(input/gcd) as usize, (output/gcd) as usize];
-        let [forward, inverse] = {let mut i = 1; loop { if inverse*i >= 4370 { break [forward*i, inverse*i]; } i += 1; }};
+        let [forward, inverse] = {let mut i = 1; loop { if inverse*i >= 8152 { break [forward*i, inverse*i]; } i += 1; }};
         let [previous_time_domain0, previous_time_domain1] = [(); 2].map(|_| zero(max(forward,inverse)*2));
         let [time_domain0, time_domain1] = [(); 2].map(|_| zero(max(forward,inverse)*2));
         Self{resampler: Resampler::new(forward, inverse), previous_time_domain0, previous_time_domain1, time_domain0, time_domain1, overflow: 0}
