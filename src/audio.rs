@@ -38,7 +38,7 @@ impl Output {
 		len += if let Some(buffer) = more_buffer && !frames.is_empty() { write(buffer, frames) } else {0};
 		self.output.commit(len as Frames);
 		if self.device.state() == State::Prepared { self.device.start()?; }
-		assert!({use State::*; matches!(self.device.state(), Running|Paused)});
+		assert!({use State::*; matches!(self.device.state(), Running|Paused|XRun)}, "{:?}", self.device.state());
 		Ok(len)
 	}
 	pub fn playing(self: &Output) -> bool { self.device.state() == State::Running }

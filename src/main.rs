@@ -31,7 +31,9 @@ fn open(path: &std::path::Path) -> Result<(Box<dyn formats::FormatReader>, std::
 	}}
 	let path = path.canonicalize()?;
 	metadata.insert("xesam:url".to_string(), format!("file://{}", path.to_str().unwrap()));
-	metadata.insert("mpris:artUrl".to_string(), format!("file://{}", path.with_file_name("cover.jpg").to_str().unwrap()));
+	if let Some(art) = ["png","jpg"].iter().find_map(|ext| { let cover = path.with_file_name(format!("cover.{ext}")); cover.exists().then(|| cover) }) {
+		metadata.insert("mpris:artUrl".to_string(), format!("file://{}", art.to_str().unwrap()));
+	}
 	let decoder = symphonia::default::get_codecs().make(&container.default_track().unwrap().codec_params, &default())?;
 	Ok((container, metadata, decoder))
 }
@@ -96,13 +98,15 @@ impl Widget for Player {
 #[async_std::main]
 async fn main() -> Result {
 	let mut player : Arch<Player> = default();
-	//#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(true).build().await?;
+	#[cfg(feature="zbus")] let _mpris = zbus::ConnectionBuilder::session()?.name("org.mpris.MediaPlayer2.RustMusic")?.serve_at("/org/zbus/RustMusic", Arch::clone(&player))?.internal_executor(true).build().await?;
 	let ref app = App::new()?;
 	thread::scope(|s| {
 		use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 		let stop = AtomicBool::new(false);
 		thread::Builder::new().spawn_scoped(s, {let player : Arch<Player> = Arch::clone(&player); move || Result::<()>::unwrap(try {
-			let playlist = walkdir::WalkDir::new(std::env::args().skip(1).next().map(|s| s.into()).unwrap_or(xdg_user::music()?.unwrap_or_default())).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
+			let root = std::env::args().skip(1).next().map(std::path::PathBuf::from);
+			//let root = root.or(xdg_user::music()?);
+			let playlist = walkdir::WalkDir::new(root.unwrap_or(std::env::current_dir()?)).follow_links(true).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
 			let playlist = std::iter::from_fn(move || loop {
 				use rand::seq::SliceRandom;
 				if let Some(entry) = playlist.choose(&mut rand::thread_rng()) {
