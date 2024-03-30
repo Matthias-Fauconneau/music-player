@@ -43,10 +43,11 @@ fn open(path: &std::path::Path) -> Result<(Box<dyn formats::FormatReader>, std::
 
 use audio::{PCM, Write as _};
 #[derive(Default)] pub struct Player {
-	output: PCM,
+	output: Vec<PCM>,
 	metadata: std::collections::HashMap<String, String>,
 }
 impl Player {
+	fn new(output: &[&str]) -> Self { Self{output: Vec::from_iter(output.into_iter().map(|path| PCM::new(path, 48000).unwrap())), ..default()} }
 	//fn title(&self) -> Result<&String> { self.metadata.get("xesam:title").ok_or("Missing title".into()) }
 }
 
@@ -54,7 +55,7 @@ impl Player {
 use {std::sync::Arc, parking_lot::{Mutex, MutexGuard}};
 #[derive(Default,Clone)] struct Arch<T>(Arc<Mutex<T>>);
 impl<T> Arch<T> {
-    //pub fn new(inner: T) -> Self { Self(std::sync::Arc::new(std::sync::Mutex::new(inner))) }
+    pub fn new(inner: T) -> Self { Self(std::sync::Arc::new(Mutex::new(inner))) }
 	//pub fn clone(&self) -> Self { Self(self.0.clone()) }
     pub fn lock(&self) -> MutexGuard<T> { self.0.lock() }
 }
@@ -62,7 +63,8 @@ unsafe impl<T> Send for Arch<T> {}
 unsafe impl<T> Sync for Arch<T> {}
 
 fn main() -> Result {
-	let player : Arch<Player> = default();
+	const N: usize = 2;
+	let player : Arch<Player> = Arch::new(Player::new(if N == 1 {&["/dev/snd/pcmC0D0p"]} else {&["/dev/snd/pcmC0D2p","/dev/snd/pcmC0D0p"]}));
 	let root = std::env::args().skip(1).next().map(std::path::PathBuf::from);
 	//let root = root.or(xdg_user::music()?);
 	let playlist = walkdir::WalkDir::new(root.unwrap_or(std::env::current_dir()?)).follow_links(true).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
@@ -84,7 +86,7 @@ fn main() -> Result {
 		player.lock().metadata = metadata;
 		//app.trigger()?;
 		type Resampler = resampler::MultiResampler;
-		let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player.lock().output./*device.hw_params_current()?.get_rate()?*/rate);
+		let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player.lock().output[0].rate);
 		use {std::borrow::Cow, symphonia::core::{formats::Packet, audio::{AudioBufferRef, AudioBuffer, Signal as _}, sample::{self, Sample, SampleFormat}, conv}};
 		trait Cast<'t, S:Sample> { fn cast(self) -> Cow<'t, AudioBuffer<S>>; }
 		impl<'t> Cast<'t, i32> for AudioBufferRef<'t> { fn cast(self) -> Cow<'t, AudioBuffer<i32>> { if let AudioBufferRef::S32(variant) = self  { variant } else { unreachable!() } } }
@@ -101,7 +103,7 @@ fn main() -> Result {
 			fn decode(&mut self, packet: &Packet) -> Self::Buffer<'_> { self.0.decode(packet).unwrap().cast() }
 		}
 		fn write
-		<S: sample::Sample+'static, D, Output: std::ops::DerefMut<Target=self::PCM>>
+		<S: sample::Sample+'static, D, Output: std::ops::DerefMut<Target=[self::PCM; N]>, const N: usize>
 		(resampler: &mut Option<Resampler>, ref mut packets: impl Iterator<Item=Packet>, decoder: D, ref mut output: impl FnMut() -> Output) -> audio::Result
 			where Decoder<D, S>: resampler::Decoder<Packet>,
 			for <'t> <Decoder<D, S> as resampler::Decoder<Packet>>::Buffer<'t>: SplitConvert<f32>,
@@ -123,7 +125,7 @@ fn main() -> Result {
 			}
 			Ok(())
 		}
-		let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
+		let output = || MutexGuard::map(player.lock(), |unlocked_player| <&mut [PCM; N]>::try_from(unlocked_player.output.as_mut_slice()).unwrap());
 		let stop = false;
 		let mut packets = std::iter::from_fn(|| (!stop).then(|| reader.next_packet().ok()).flatten()); // TODO: fade out
 		let sample_format = decoder.codec_params().sample_format.unwrap_or_else(|| match decoder.decode(&packets.next().unwrap()).unwrap() {
@@ -132,8 +134,8 @@ fn main() -> Result {
 			_ => unimplemented!(),
 		});
 		match sample_format {
-			SampleFormat::S32 => write::<i32, _, _>(resampler, packets, decoder, output),
-			SampleFormat::F32 => write::<f32, _, _>(resampler, packets, decoder, output),
+			SampleFormat::S32 => write::<i32, _, _, N>(resampler, packets, decoder, output),
+			SampleFormat::F32 => write::<f32, _, _, N>(resampler, packets, decoder, output),
 			_ => unimplemented!(),
 		}?;
 		if stop { break; }
