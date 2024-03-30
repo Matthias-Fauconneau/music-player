@@ -5,17 +5,16 @@ fehler='*'
 anyhow='*'
 url='*'
 rand='*'
-rustix='*'
+rustix={version='*', features=['fs','event','mm']}
 walkdir='*'
 parking_lot='*'
 
-alsa='*'
 symphonia={features= ['flac','mp3'], version='*'}
 
 num={git='https://github.com/Matthias-Fauconneau/num'}
 realfft='*'
 
-ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text']}
+ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text'], optional=true}
 
 image={git='https://github.com/Matthias-Fauconneau/image'}
 image-io={package='image', version='*'}
@@ -27,7 +26,4 @@ xdg-user='*'
 
 [features]
 zbus=['dep:zbus','async-std']
-default=['zbus']
-
-#[patch.'https://github.com/Matthias-Fauconneau/ui']
-#ui={path='../ui'}
+#default=['zbus']
