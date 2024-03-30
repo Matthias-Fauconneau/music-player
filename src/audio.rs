@@ -55,8 +55,9 @@ IO!{start, b'A', 0x42}
 
 const  STATE_SETUP : u32 = 1;
 const  STATE_PREPARED : u32 = 2;
-//const  STATE_XRUN : u32 = 4;
-#[repr(C)] struct Status { state: u32, pad: u32, hw_pointer: *const u16, sec: u64, nsec: u64, suspended_state: u32 }
+const  STATE_RUNNING : u32 = 3;
+const  STATE_XRUN : u32 = 4;
+#[repr(C)] struct Status { state: u32, pad: u32, hw_pointer: usize, sec: u64, nsec: u64, suspended_state: u32 }
 #[repr(C)] struct Control { sw_pointer: usize, avail_min: u64 }
 
 pub struct PCM {
@@ -81,32 +82,23 @@ impl PCM {
 		params.intervals[INTERVAL_RATE] =  rate.into();
 		params.intervals[INTERVAL_PERIODS] =  2.into();
 		hw_refine(&fd, &mut params).unwrap();
-		params.intervals[INTERVAL_PERIOD_SIZE] =  dbg!(params.intervals[INTERVAL_PERIOD_SIZE].max.into());
+		params.intervals[INTERVAL_PERIOD_SIZE] =  params.intervals[INTERVAL_PERIOD_SIZE].max.into();
 		params.intervals[INTERVAL_BUFFER_SIZE] = (u32::from(params.intervals[INTERVAL_PERIODS]) * u32::from(params.intervals[INTERVAL_PERIOD_SIZE])).into();
-		println!("{:?}", params.intervals[INTERVAL_BUFFER_SIZE]);
-		println!("{:?}", params.intervals[INTERVAL_RATE]);
-		println!("{:?}", params);
 		hw_params(&fd, &mut params).unwrap();
-		//let period_size = u32::from(params.intervals[INTERVAL_PERIOD_SIZE]);
-  		//let buffer_size = u32::from(params.intervals[INTERVAL_PERIODS]) * period_size;
+		let period_size = u32::from(params.intervals[INTERVAL_PERIOD_SIZE]);
 		let buffer_size = u32::from(params.intervals[INTERVAL_BUFFER_SIZE]);
-		//println!("{period_size} {buffer_size}");
-		println!("{buffer_size}");
-		//let map = |addr, len, prot| unsafe{std::slice::from_raw_parts_mut(mmap(std::ptr::from_exposed_addr(addr), len*std::mem::size_of::<T>(), prot, SHARED, &fd, 0).unwrap() as *mut T, len)};
 		fn map<T>(fd: impl std::os::fd::AsFd, offset: u64, len: u32, prot: rustix::mm::ProtFlags) -> *mut T {
 			unsafe{rustix::mm::mmap(std::ptr::null_mut(), (len as usize*std::mem::size_of::<T>()).max(0x1000), prot, rustix::mm::MapFlags::SHARED, &fd, offset).unwrap() as *mut T}}
 		use rustix::mm::ProtFlags;
 		let buffer = unsafe{std::slice::from_raw_parts_mut(map(&fd, 0, buffer_size, ProtFlags::READ|ProtFlags::WRITE), buffer_size as usize)};
   		let status : *const Status = map(&fd, 0x80000000, 1, ProtFlags::READ);
   		let control : *mut Control = map(&fd, 0x81000000, 1, ProtFlags::READ|ProtFlags::WRITE);
-  		//unsafe{&mut *control}.avail_min = period_size as u64;
-		unsafe{&mut *control}.avail_min = (buffer_size/2) as u64;
+  		unsafe{&mut *control}.avail_min = period_size as u64;
 		assert_eq!(unsafe{&*status}.state, STATE_SETUP);
   		prepare(&fd)?;
 		Ok(Self{fd, rate, buffer, status, control})//, period_size})
 	}
 	pub fn try_write(&mut self, frames: &mut impl ExactSizeIterator<Item=[i16; 2]>) -> Result<usize> {
-		//assert_eq!(frames.len(), self.period_size as usize);
 		assert!(!frames.is_empty());
 		fn write(buffer: &mut [[i16; 2]], frames: &mut impl ExactSizeIterator<Item=[i16; 2]>) -> usize {
 			assert!(buffer.len() > 0);
@@ -115,17 +107,20 @@ impl PCM {
 			for (target, frame) in target { unsafe{std::ptr::write_volatile(target as *mut [i16; 2], frame)}; }
 			len
 		}
-		let start = unsafe{&mut *self.control}.sw_pointer%self.buffer.len();
-		//println!("{start} {} {}", start+self.period_size as usize, self.buffer.len());
-		//assert!(start+self.period_size as usize <= self.buffer.len());
-		let len = write(&mut self.buffer[start../*start+self.period_size as usize*/], frames);
-		//println!("{len}");
-		//assert_eq!(len as u32, self.period_size);
-		//assert!(len as u32 >= self.period_size);
+		let start = unsafe{&*self.control}.sw_pointer%self.buffer.len();
+		let available = self.buffer.len() - unsafe{&*self.control}.sw_pointer + unsafe{&*self.status}.hw_pointer;
+		let end = (start+available).min(self.buffer.len());
+		//let end = if start+available > self.buffer.len() { self.buffer.len() } else { start+available };
+		let len = write(&mut self.buffer[start..end], frames);
+		println!("{len}");
 		assert!(len as u32 > 0);
 		unsafe{&mut *self.control}.sw_pointer += len;
-		if unsafe{&*self.status}.state == STATE_PREPARED { println!("start"); self::start(&self.fd)?; }
-		//else { println!("{}", unsafe{&*self.status}.state); }
+		match unsafe{&*self.status}.state {
+			STATE_RUNNING => {},
+			STATE_PREPARED => { println!("start {}", unsafe{&*self.control}.sw_pointer); self::start(&self.fd)?; },
+			STATE_XRUN => { println!("xrun {available}"); self::prepare(&self.fd)?; },
+			state => panic!("{state}"),
+		}
 		Ok(len)
 	}
 	//pub fn playing(&self) -> bool { self.device.state() == State::Running }
@@ -148,6 +143,7 @@ impl<MutexGuard: std::ops::DerefMut<Target=PCM>, S: FnMut() -> MutexGuard> Write
 		rustix::event::poll(fds, -1).unwrap();
 		assert!(fds[0].revents().contains(rustix::event::PollFlags::OUT));
 		//println!("ok");
+		//if(status->state == XRun) { io<PREPARE>(); underruns++; log("Underrun", underruns); }
 		self().try_write(&mut frames)?; // Waits for device. TODO: fade out and return on UI quit
 	}
 }}
