@@ -50,24 +50,41 @@ impl Player {
 	//fn title(&self) -> Result<&String> { self.metadata.get("xesam:title").ok_or("Missing title".into()) }
 }
 
+
+use {std::sync::Arc, parking_lot::{Mutex, MutexGuard}};
+#[derive(Default,Clone)] struct Arch<T>(Arc<Mutex<T>>);
+impl<T> Arch<T> {
+    //pub fn new(inner: T) -> Self { Self(std::sync::Arc::new(std::sync::Mutex::new(inner))) }
+	//pub fn clone(&self) -> Self { Self(self.0.clone()) }
+    pub fn lock(&self) -> MutexGuard<T> { self.0.lock() }
+}
+unsafe impl<T> Send for Arch<T> {}
+unsafe impl<T> Sync for Arch<T> {}
+
 fn main() -> Result {
-	let ref mut player : Player = default();
+	let player : Arch<Player> = default();
 	let root = std::env::args().skip(1).next().map(std::path::PathBuf::from);
 	//let root = root.or(xdg_user::music()?);
 	let playlist = walkdir::WalkDir::new(root.unwrap_or(std::env::current_dir()?)).follow_links(true).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
-	let playlist = std::iter::from_fn(move || loop {
+	let playlist = {let mut playlist = playlist; rand::seq::SliceRandom::shuffle(&mut *playlist, &mut rand::thread_rng()); playlist};
+	let playlist = playlist.into_iter().filter_map(|entry| {
+		let path = entry.path();
+		println!("{}", path.display());
+		open(path).ok()
+	});
+	/*let playlist = std::iter::from_fn(move || loop {
 		use rand::seq::SliceRandom;
 		if let Some(entry) = playlist.choose(&mut rand::thread_rng()) {
 			let path = entry.path();
 			println!("{}", path.display());
 			if let Ok(next) = open(path) { break Some(next); }
 		} else { break None; }
-	});
+	});*/
 	for (mut reader, metadata, mut decoder) in playlist {
-		player/*.lock()*/.metadata = metadata;
+		player.lock().metadata = metadata;
 		//app.trigger()?;
 		type Resampler = resampler::MultiResampler;
-		let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player/*.lock()*/.output./*device.hw_params_current()?.get_rate()?*/rate);
+		let ref mut resampler = Resampler::new(decoder.codec_params().sample_rate.unwrap(), player.lock().output./*device.hw_params_current()?.get_rate()?*/rate);
 		use {std::borrow::Cow, symphonia::core::{formats::Packet, audio::{AudioBufferRef, AudioBuffer, Signal as _}, sample::{self, Sample, SampleFormat}, conv}};
 		trait Cast<'t, S:Sample> { fn cast(self) -> Cow<'t, AudioBuffer<S>>; }
 		impl<'t> Cast<'t, i32> for AudioBufferRef<'t> { fn cast(self) -> Cow<'t, AudioBuffer<i32>> { if let AudioBufferRef::S32(variant) = self  { variant } else { unreachable!() } } }
@@ -106,8 +123,7 @@ fn main() -> Result {
 			}
 			Ok(())
 		}
-		//let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
-		let output = || &mut player.output;
+		let output = || MutexGuard::map(player.lock(), |unlocked_player| &mut unlocked_player.output);
 		let stop = false;
 		let mut packets = std::iter::from_fn(|| (!stop).then(|| reader.next_packet().ok()).flatten()); // TODO: fade out
 		let sample_format = decoder.codec_params().sample_format.unwrap_or_else(|| match decoder.decode(&packets.next().unwrap()).unwrap() {
@@ -125,15 +141,6 @@ fn main() -> Result {
 	Ok(())
 }
 
-/*use {std::sync::Arc, parking_lot::{Mutex, MutexGuard}};
-#[derive(Default,Clone)] struct Arch<T>(Arc<Mutex<T>>);
-impl<T> Arch<T> {
-    //pub fn new(inner: T) -> Self { Self(std::sync::Arc::new(std::sync::Mutex::new(inner))) }
-	pub fn clone(&self) -> Self { Self(self.0.clone()) }
-    pub fn lock(&self) -> MutexGuard<T> { self.0.lock() }
-}
-unsafe impl<T> Send for Arch<T> {}
-unsafe impl<T> Sync for Arch<T> {}*/
 #[cfg(feature="ui")] impl<T:Widget> Widget for Arch<T> {
 	fn paint(&mut self, target: &mut Target, size: size, offset: int2) -> Result { self.lock().paint(target, size, offset) }
 	fn event(&mut self, size: size, context: &mut EventContext, event: &Event) -> Result<bool> { self.lock().event(size, context, event) }

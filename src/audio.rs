@@ -5,11 +5,12 @@ pub use std::io::Error;
 pub type Result<T=(), E=Error> = std::result::Result<T,E>;
 
 const INTERVAL_FLAG_INTEGER : u32 = 1<<2;
-#[derive(Default,Clone,Copy)] struct Interval { min: u32, max: u32, flags : u32 }
+#[derive(Debug)] #[derive(Clone,Copy)] #[repr(C)] struct Interval { min: u32, max: u32, flags : u32 }
+impl Default for Interval { fn default() -> Self { Self{min: 0, max: !0, flags: 0 }}}
 impl From<u32> for Interval { fn  from(value: u32) -> Self { Self{min: value, max: value, flags: INTERVAL_FLAG_INTEGER} } }
 impl From<Interval> for u32 { fn from(Interval{min, max, ..}: Interval) -> u32 { assert_eq!(min, max); return max; } }
 
-#[derive(Default)]
+#[derive(Default)] #[repr(C)] #[derive(Debug)]
 struct HWParams {
     flags: f32, // = NoResample;
     masks: [[u32; 8]; 3],
@@ -34,18 +35,23 @@ const INTERVAL_SAMPLE_BITS : usize = 0;
 const INTERVAL_FRAME_BITS : usize = 1;
 const INTERVAL_CHANNELS : usize = 2;
 const INTERVAL_RATE : usize = 3;
-const INTERVAL_PERIOD_SIZE : usize = 5;
-const INTERVAL_PERIODS : usize = 7;
+//const INTERVAL_PERIOD_SIZE : usize = 5;
+//const INTERVAL_PERIODS : usize = 7;
+//const INTERVAL_BUFFER_TIME : usize = 8;
+const INTERVAL_BUFFER_SIZE : usize = 9;
 
 macro_rules! IO{($name:ident, $ioty:expr, $nr:expr) => {
-    pub fn $name(fd: impl std::os::fd::AsFd) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::NoArg::<rustix::ioctl::NoneOpcode<$ioty, $nr, ()>>::new())} } } }
+    fn $name(fd: impl std::os::fd::AsFd) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::NoArg::<rustix::ioctl::NoneOpcode<$ioty, $nr, ()>>::new())} } } }
 macro_rules! IOWR{($name:ident, $ioty:expr, $nr:expr, $ty:ty) => {
-	pub fn $name(fd: impl std::os::fd::AsFd, data: &mut $ty) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<rustix::ioctl::ReadWriteOpcode<$ioty, $nr, $ty>, $ty>::new(data))} } } }
+	fn $name(fd: impl std::os::fd::AsFd, data: &mut $ty) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<rustix::ioctl::ReadWriteOpcode<$ioty, $nr, $ty>, $ty>::new(data))} } } }
 
 IOWR!{hw_params, b'A', 0x11, HWParams}
+IO!{prepare, b'A', 0x40}
 IO!{start, b'A', 0x42}
 
+const  STATE_SETUP : u32 = 1;
 const  STATE_PREPARED : u32 = 2;
+//const  STATE_XRUN : u32 = 4;
 #[repr(C)] struct Status { state: u32, pad: u32, hw_pointer: *const u16, sec: u64, nsec: u64, suspended_state: u32 }
 #[repr(C)] struct Control { sw_pointer: usize, avail_min: u64 }
 
@@ -55,34 +61,41 @@ pub struct PCM {
 	buffer: &'static mut [[i16; 2]],
 	status: *const Status,
 	control: *mut Control,
-	period_size: u32,
+	//period_size: u32,
 }
 
 impl PCM {
 	pub fn new(rate: u32) -> Result<Self> {
 		let fd = rustix::fs::open("/dev/snd/pcmC0D31p", rustix::fs::OFlags::RDWR|rustix::fs::OFlags::NONBLOCK, rustix::fs::Mode::empty())?;
-		let mut hparams = HWParams::new();
-  		hparams.masks[MASK_ACCESS][0] |= ACCESS_MMAP_INTERLEAVED;
-		hparams.masks[MASK_FORMAT][0] |= FORMAT_S16_LE;
-		hparams.masks[MASK_SUBFORMAT][0] |= SUBFORMAT_STANDARD;
-		hparams.intervals[INTERVAL_CHANNELS] = 2.into();
-		hparams.intervals[INTERVAL_SAMPLE_BITS] = 16.into();
-		hparams.intervals[INTERVAL_FRAME_BITS] =  (16*2).into();
-		hparams.intervals[INTERVAL_RATE] =  rate.into();
-		hw_params(&fd, &mut hparams);
-		let period_size = u32::from(hparams.intervals[INTERVAL_PERIOD_SIZE]);
-  		let buffer_size = u32::from(hparams.intervals[INTERVAL_PERIODS]) * period_size;
+		let mut params = HWParams::new();
+  		params.masks[MASK_ACCESS][0] |= ACCESS_MMAP_INTERLEAVED;
+		params.masks[MASK_FORMAT][0] |= FORMAT_S16_LE;
+		params.masks[MASK_SUBFORMAT][0] |= SUBFORMAT_STANDARD;
+		params.intervals[INTERVAL_CHANNELS] = 2.into();
+		params.intervals[INTERVAL_SAMPLE_BITS] = 16.into();
+		params.intervals[INTERVAL_FRAME_BITS] =  (16*2).into();
+		params.intervals[INTERVAL_RATE] =  rate.into();
+		hw_params(&fd, &mut params).unwrap();
+		//let period_size = u32::from(params.intervals[INTERVAL_PERIOD_SIZE]);
+  		//let buffer_size = u32::from(params.intervals[INTERVAL_PERIODS]) * period_size;
+		let buffer_size = u32::from(params.intervals[INTERVAL_BUFFER_SIZE]);
+		//println!("{period_size} {buffer_size}");
+		println!("{buffer_size}");
 		//let map = |addr, len, prot| unsafe{std::slice::from_raw_parts_mut(mmap(std::ptr::from_exposed_addr(addr), len*std::mem::size_of::<T>(), prot, SHARED, &fd, 0).unwrap() as *mut T, len)};
-		fn map<T>(fd: impl std::os::fd::AsFd, addr: usize, len: u32, prot: rustix::mm::ProtFlags) -> *mut T {
-			unsafe{rustix::mm::mmap(addr as *mut _, len as usize*std::mem::size_of::<T>(), prot, rustix::mm::MapFlags::SHARED, &fd, 0).unwrap() as *mut T}}
+		fn map<T>(fd: impl std::os::fd::AsFd, offset: u64, len: u32, prot: rustix::mm::ProtFlags) -> *mut T {
+			unsafe{rustix::mm::mmap(std::ptr::null_mut(), (len as usize*std::mem::size_of::<T>()).max(0x1000), prot, rustix::mm::MapFlags::SHARED, &fd, offset).unwrap() as *mut T}}
 		use rustix::mm::ProtFlags;
 		let buffer = unsafe{std::slice::from_raw_parts_mut(map(&fd, 0, buffer_size, ProtFlags::READ|ProtFlags::WRITE), buffer_size as usize)};
-  		let status = map(&fd, 0x80000000, 1, ProtFlags::READ);
+  		let status : *const Status = map(&fd, 0x80000000, 1, ProtFlags::READ);
   		let control : *mut Control = map(&fd, 0x81000000, 1, ProtFlags::READ|ProtFlags::WRITE);
-  		unsafe{&mut *control}.avail_min = period_size as u64;
-		Ok(Self{fd, rate, buffer, status, control, period_size})
+  		//unsafe{&mut *control}.avail_min = period_size as u64;
+		unsafe{&mut *control}.avail_min = (buffer_size/2) as u64;
+		assert_eq!(unsafe{&*status}.state, STATE_SETUP);
+  		prepare(&fd)?;
+		Ok(Self{fd, rate, buffer, status, control})//, period_size})
 	}
 	pub fn try_write(&mut self, frames: &mut impl ExactSizeIterator<Item=[i16; 2]>) -> Result<usize> {
+		//assert_eq!(frames.len(), self.period_size as usize);
 		assert!(!frames.is_empty());
 		fn write(buffer: &mut [[i16; 2]], frames: &mut impl ExactSizeIterator<Item=[i16; 2]>) -> usize {
 			assert!(buffer.len() > 0);
@@ -91,10 +104,17 @@ impl PCM {
 			for (target, frame) in target { unsafe{std::ptr::write_volatile(target as *mut [i16; 2], frame)}; }
 			len
 		}
-		let len = self.buffer.len();
-		let len = write(&mut self.buffer[unsafe{&mut *self.control}.sw_pointer%len..(unsafe{&mut *self.control}.sw_pointer+self.period_size as usize)%len], frames);
+		let start = unsafe{&mut *self.control}.sw_pointer%self.buffer.len();
+		//println!("{start} {} {}", start+self.period_size as usize, self.buffer.len());
+		//assert!(start+self.period_size as usize <= self.buffer.len());
+		let len = write(&mut self.buffer[start../*start+self.period_size as usize*/], frames);
+		//println!("{len}");
+		//assert_eq!(len as u32, self.period_size);
+		//assert!(len as u32 >= self.period_size);
+		assert!(len as u32 > 0);
 		unsafe{&mut *self.control}.sw_pointer += len;
-		if unsafe{&*self.status}.state == STATE_PREPARED { start(&self.fd)?; }
+		if unsafe{&*self.status}.state == STATE_PREPARED { println!("start"); self::start(&self.fd)?; }
+		//else { println!("{}", unsafe{&*self.status}.state); }
 		Ok(len)
 	}
 	//pub fn playing(&self) -> bool { self.device.state() == State::Running }
@@ -113,8 +133,10 @@ impl<MutexGuard: std::ops::DerefMut<Target=PCM>, S: FnMut() -> MutexGuard> Write
 		let ref fd = unsafe{std::os::fd::BorrowedFd::borrow_raw(rustix::fd::AsRawFd::as_raw_fd(&audio_lock.fd))}; // Downcast to drop lock while waiting
 		let ref mut fds = [rustix::event::PollFd::new(fd, rustix::event::PollFlags::OUT)];
 		drop(audio_lock); // But do not stay locked while this audio thread is waiting for the device
+		//println!("wait");
 		rustix::event::poll(fds, -1).unwrap();
 		assert!(fds[0].revents().contains(rustix::event::PollFlags::OUT));
+		//println!("ok");
 		self().try_write(&mut frames)?; // Waits for device. TODO: fade out and return on UI quit
 	}
 }}
