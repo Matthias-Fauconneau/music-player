@@ -35,16 +35,20 @@ const INTERVAL_SAMPLE_BITS : usize = 0;
 const INTERVAL_FRAME_BITS : usize = 1;
 const INTERVAL_CHANNELS : usize = 2;
 const INTERVAL_RATE : usize = 3;
-//const INTERVAL_PERIOD_SIZE : usize = 5;
-//const INTERVAL_PERIODS : usize = 7;
+//const INTERVAL_PERIOD_TIME : usize = 4;
+const INTERVAL_PERIOD_SIZE : usize = 5;
+//const INTERVAL_PERIOD_BYTES : usize = 5;
+const INTERVAL_PERIODS : usize = 7;
 //const INTERVAL_BUFFER_TIME : usize = 8;
 const INTERVAL_BUFFER_SIZE : usize = 9;
+//const INTERVAL_BUFFER_BYTES : usize = 10;
 
 macro_rules! IO{($name:ident, $ioty:expr, $nr:expr) => {
     fn $name(fd: impl std::os::fd::AsFd) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::NoArg::<rustix::ioctl::NoneOpcode<$ioty, $nr, ()>>::new())} } } }
 macro_rules! IOWR{($name:ident, $ioty:expr, $nr:expr, $ty:ty) => {
 	fn $name(fd: impl std::os::fd::AsFd, data: &mut $ty) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<rustix::ioctl::ReadWriteOpcode<$ioty, $nr, $ty>, $ty>::new(data))} } } }
 
+IOWR!{hw_refine, b'A', 0x10, HWParams}
 IOWR!{hw_params, b'A', 0x11, HWParams}
 IO!{prepare, b'A', 0x40}
 IO!{start, b'A', 0x42}
@@ -75,6 +79,13 @@ impl PCM {
 		params.intervals[INTERVAL_SAMPLE_BITS] = 16.into();
 		params.intervals[INTERVAL_FRAME_BITS] =  (16*2).into();
 		params.intervals[INTERVAL_RATE] =  rate.into();
+		params.intervals[INTERVAL_PERIODS] =  2.into();
+		hw_refine(&fd, &mut params).unwrap();
+		params.intervals[INTERVAL_PERIOD_SIZE] =  dbg!(params.intervals[INTERVAL_PERIOD_SIZE].max.into());
+		params.intervals[INTERVAL_BUFFER_SIZE] = (u32::from(params.intervals[INTERVAL_PERIODS]) * u32::from(params.intervals[INTERVAL_PERIOD_SIZE])).into();
+		println!("{:?}", params.intervals[INTERVAL_BUFFER_SIZE]);
+		println!("{:?}", params.intervals[INTERVAL_RATE]);
+		println!("{:?}", params);
 		hw_params(&fd, &mut params).unwrap();
 		//let period_size = u32::from(params.intervals[INTERVAL_PERIOD_SIZE]);
   		//let buffer_size = u32::from(params.intervals[INTERVAL_PERIODS]) * period_size;
