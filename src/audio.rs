@@ -80,7 +80,7 @@ impl PCM {
 		params.intervals[INTERVAL_SAMPLE_BITS] = 16.into();
 		params.intervals[INTERVAL_FRAME_BITS] =  (16*2).into();
 		params.intervals[INTERVAL_RATE] =  rate.into();
-		params.intervals[INTERVAL_PERIODS] =  2.into();
+		params.intervals[INTERVAL_PERIODS] =  3.into();
 		hw_refine(&fd, &mut params).unwrap();
 		params.intervals[INTERVAL_PERIOD_SIZE] =  params.intervals[INTERVAL_PERIOD_SIZE].max.into();
 		params.intervals[INTERVAL_BUFFER_SIZE] = (u32::from(params.intervals[INTERVAL_PERIODS]) * u32::from(params.intervals[INTERVAL_PERIOD_SIZE])).into();
@@ -109,15 +109,19 @@ impl PCM {
 		}
 		let start = unsafe{&*self.control}.sw_pointer%self.buffer.len();
 		let available = self.buffer.len() - unsafe{&*self.control}.sw_pointer + unsafe{&*self.status}.hw_pointer;
-		let end = (start+available).min(self.buffer.len());
-		//let end = if start+available > self.buffer.len() { self.buffer.len() } else { start+available };
-		let len = write(&mut self.buffer[start..end], frames);
-		println!("{len}");
+		let len = if start + available <= self.buffer.len() {
+			let end = start+available;
+			write(&mut self.buffer[start..end], frames)
+		} else {
+			let len = write(&mut self.buffer[start..], frames);
+			if len < self.buffer.len()-start { len }
+			else { len + write(&mut self.buffer[0..available-len], frames) }
+		};
 		assert!(len as u32 > 0);
 		unsafe{&mut *self.control}.sw_pointer += len;
 		match unsafe{&*self.status}.state {
 			STATE_RUNNING => {},
-			STATE_PREPARED => { println!("start {}", unsafe{&*self.control}.sw_pointer); self::start(&self.fd)?; },
+			STATE_PREPARED => { self::start(&self.fd)?; },
 			STATE_XRUN => { println!("xrun {available}"); self::prepare(&self.fd)?; },
 			state => panic!("{state}"),
 		}
