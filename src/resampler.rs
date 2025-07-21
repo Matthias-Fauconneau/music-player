@@ -1,12 +1,5 @@
 #![allow(non_snake_case)]
 fn collect<T>(target: &mut [T], iter: &mut impl Iterator<Item=T>) -> usize { target.iter_mut().zip(iter).fold(0, |len, (slot, item)| { *slot = item; len + 1 }) }
-/*#[track_caller] fn exhaust<T>(target: &mut [T], iter: impl IntoIterator<IntoIter:ExactSizeIterator,Item=T>) -> usize {
-    let ref mut iter = iter.into_iter();
-    assert_eq!(target.len(), iter.len());
-    let len = collect(target, iter);
-    assert!(iter.next().is_none() && len==target.len());
-    len
-}*/
 use realfft::num_traits::Zero;
 fn zero<T:Zero>(len: usize) -> Box<[T]> { Box::<[T]>::from_iter((0..len).map(|_| T::zero())) }
 
@@ -70,9 +63,7 @@ pub struct MultiResampler {
     time_domain0: Box<[f32]>, time_domain1: Box<[f32]>,
     overflow: usize,
 }
-//pub trait Decoder<Packet> { type Channel<'t> where Self: 't; fn decode(&mut self, _: &Packet) -> [Self::Channel<'_>; 2]; }
-pub trait Decoder<Packet> { type Buffer<'t> where Self: 't; fn decode(&mut self, _: &Packet) -> Self::Buffer<'_>; }
-pub trait SplitConvert<T> { type Channel<'t>: ExactSizeIterator<Item=T>+'t where Self: 't; fn split_convert<'t>(&'t self) -> [Self::Channel<'t>; 2]; }
+
 impl MultiResampler {
 pub fn new(input: u32, output: u32) -> Option<Self> {
     (input != output).then(|| {

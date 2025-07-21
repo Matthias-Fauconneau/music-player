@@ -43,10 +43,10 @@ const INTERVAL_PERIODS : usize = 7;
 const INTERVAL_BUFFER_SIZE : usize = 9;
 //const INTERVAL_BUFFER_BYTES : usize = 10;
 
-macro_rules! IO{($name:ident, $ioty:expr, $nr:expr) => {
-    fn $name(fd: impl std::os::fd::AsFd) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::NoArg::<rustix::ioctl::NoneOpcode<$ioty, $nr, ()>>::new())} } } }
-macro_rules! IOWR{($name:ident, $ioty:expr, $nr:expr, $ty:ty) => {
-	fn $name(fd: impl std::os::fd::AsFd, data: &mut $ty) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<rustix::ioctl::ReadWriteOpcode<$ioty, $nr, $ty>, $ty>::new(data))} } } }
+macro_rules! IO{($name:ident, $group:expr, $number:expr) => {
+    fn $name(fd: impl std::os::fd::AsFd) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::NoArg::<{rustix::ioctl::opcode::none($group, $number)}>::new())} } } }
+macro_rules! IOWR{($name:ident, $group:expr, $number:expr, $type:ty) => {
+	fn $name(fd: impl std::os::fd::AsFd, data: &mut $type) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<{rustix::ioctl::opcode::read_write::<$type>($group, $number)}, $type>::new(data))} } } }
 
 IOWR!{hw_refine, b'A', 0x10, HWParams}
 IOWR!{hw_params, b'A', 0x11, HWParams}
@@ -163,7 +163,7 @@ impl<MutexGuard: std::ops::DerefMut<Target=[PCM; N]>, S: FnMut() -> MutexGuard, 
 			let ref mut fds = Vec::from_iter(fds.into_iter().map(|fd| rustix::event::PollFd::new(fd, rustix::event::PollFlags::OUT)));
 			drop(audio_lock); // But do not stay locked while this audio thread is waiting for the device
 			//println!("wait");
-			rustix::event::poll(fds, -1).unwrap();
+			rustix::event::poll(fds, None).unwrap();
 			assert!(fds.into_iter().any(|fd| fd.revents().contains(rustix::event::PollFlags::OUT)));
 			//println!("ok");
 			//if(status->state == XRun) { io<PREPARE>(); underruns++; log("Underrun", underruns); }

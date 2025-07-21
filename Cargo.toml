@@ -1,4 +1,4 @@
-package={name='music-player', version='0.0.0', authors=['Matthias Fauconneau <matthias.fauconneau@gmail.com>'], edition= '2021'}
+package={name='music-player', version='0.0.0', authors=['Matthias Fauconneau <matthias.fauconneau@gmail.com>'], edition= '2024'}
 
 [dependencies]
 fehler='*'
@@ -25,5 +25,6 @@ async-std={features=['attributes'], version='*', optional=true}
 xdg-user='*'
 
 [features]
+resample=[]
 zbus=['dep:zbus','async-std']
 #default=['zbus']
