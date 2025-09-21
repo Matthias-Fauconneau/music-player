@@ -41,8 +41,6 @@ const INTERVAL_BUFFER_SIZE : usize = 9;
 
 macro_rules! IO{($name:ident, $group:expr, $number:expr) => {
     fn $name(fd: impl std::os::fd::AsFd) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::NoArg::<{rustix::ioctl::opcode::none($group, $number)}>::new())} } } }
-macro_rules! IOW{($name:ident, $group:expr, $number:expr, $type:ty) => {
-	fn $name(fd: impl std::os::fd::AsFd, data: &mut $type) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<{rustix::ioctl::opcode::write::<$type>($group, $number)}, $type>::new(data))} } } }
 macro_rules! IOWR{($name:ident, $group:expr, $number:expr, $type:ty) => {
 	fn $name(fd: impl std::os::fd::AsFd, data: &mut $type) -> rustix::io::Result<()> { unsafe{rustix::ioctl::ioctl(fd, rustix::ioctl::Updater::<{rustix::ioctl::opcode::read_write::<$type>($group, $number)}, $type>::new(data))} } } }
 
@@ -50,15 +48,13 @@ IOWR!{hw_refine, b'A', 0x10, HWParams}
 IOWR!{hw_params, b'A', 0x11, HWParams}
 IO!{prepare, b'A', 0x40}
 IO!{start, b'A', 0x42}
-//IO!{drop, b'A', 0x43}
-IOW!{pause, b'A', 0x45, i32}
+//IO!{_drop, b'A', 0x43}
 
 const  STATE_SETUP : u32 = 1;
 const  STATE_PREPARED : u32 = 2;
 const  STATE_RUNNING : u32 = 3;
 const  STATE_XRUN : u32 = 4;
 //const  STATE_DRAINING : u32 = 5;
-const  STATE_PAUSED : u32 = 6;
 #[repr(C)] struct Status { state: u32, pad: u32, hw_pointer: usize, sec: u64, nsec: u64, suspended_state: u32 }
 #[repr(C)] struct Control { sw_pointer: usize, avail_min: u64 }
 
@@ -69,6 +65,7 @@ pub struct Output {
 	status: *const Status,
 	control: *mut Control,
 	pub t: usize, // like sw_pointer but isn't reset by driver when state changes
+	//pause: Mutex<()>,
 }
 
 impl Output {
@@ -134,17 +131,6 @@ impl Output {
 			state => panic!("{state}"),
 		}
 		Ok(len)
-	}
-	//fn running(&self) -> bool { unsafe{&*self.status}.state == STATE_RUNNING }
-	//fn drop(&self) { drop(&self.fd).unwrap(); }
-	//fn play(&self) { self.lock().audio.device.pause(false).unwrap(); }
-	pub fn toggle_play_pause(&self) -> Result<()> {
-		match unsafe{&*self.status}.state {
-			STATE_RUNNING => pause(&self.fd, &mut 1)?,
-			STATE_PAUSED => pause(&self.fd, &mut 0)?,
-			state => panic!("{state}"),
-		}
-		Ok(())
 	}
 }
 

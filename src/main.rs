@@ -43,17 +43,19 @@ fn open(path: &std::path::Path) -> Result<(Box<dyn formats::FormatReader>, std::
 }
 
 use audio::{Output, Write as _};
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use {std::sync::atomic::{AtomicBool, Ordering::Relaxed}, parking_lot::Condvar};
 pub struct Player<'t> {
 	output: Vec<Output>,
 	metadata: std::collections::HashMap<String, String>,
 	next: &'t AtomicBool,
+	pause: &'t AtomicBool,
+	unpark: &'t Condvar, 
 }
-impl<'t> Player<'t> {
-	fn new(output: &[&str], next: &'t AtomicBool) -> Self { Self{
+impl<'t, 's> Player<'t> {
+	fn new(output: &[&str], next: &'t AtomicBool, pause: &'t AtomicBool, unpark: &'t Condvar) -> Self { Self{
 		output: Vec::from_iter(output.into_iter().map(|path| Output::new(path, 48000).unwrap())),
 		metadata: default(),
-		next
+		next, pause, unpark,
 	}}
 	fn title(&self) -> Result<&String> { self.metadata.get("xesam:title").ok_or("Missing title".into()) }
 }
@@ -118,7 +120,11 @@ fn main() -> Result {
 	const N: usize = 1;
 	let next = AtomicBool::new(false);
 	let next = &next;
-	let player : Arch<Player> = Arch::new(Player::new(if N == 1 {&["/dev/snd/pcmC0D0p"]} else {&["/dev/snd/pcmC0D2p","/dev/snd/pcmC0D0p"]}, next));
+	let pause = AtomicBool::new(false);
+	let pause = &pause;
+	let unpark = parking_lot::Condvar::new();
+	let unpark = &unpark;
+	let player : Arch<Player> = Arch::new(Player::new(if N == 1 {&["/dev/snd/pcmC0D0p"]} else {&["/dev/snd/pcmC0D2p","/dev/snd/pcmC0D0p"]}, next, pause, unpark));
 	let root = std::env::args().skip(1).next().map(std::path::PathBuf::from);
 	let playlist = walkdir::WalkDir::new(root.unwrap_or(std::env::current_dir()?)).follow_links(true).into_iter().filter(|e| e.as_ref().unwrap().file_type().is_file()).filter_map(|e| e.ok()).collect::<Box<_>>();
 	let playlist = {let mut playlist = playlist; rand::seq::SliceRandom::shuffle(&mut *playlist, &mut rand::rng()); playlist};
@@ -132,7 +138,10 @@ fn main() -> Result {
 			for (mut reader, metadata, mut decoder) in playlist {
 				player.lock().metadata = metadata;
 				ui::trigger(trigger).unwrap();
-				let mut packets = std::iter::from_fn(|| (!stop.load(Relaxed) && !next.load(Relaxed)).then(|| reader.next_packet().ok()).flatten()); // TODO: fade out
+				let mut packets = std::iter::from_fn(|| {
+					while player.lock().pause.load(Relaxed) { println!("pause"); unpark.wait(&mut player.lock());  }
+					(!stop.load(Relaxed) && !next.load(Relaxed)).then(|| reader.next_packet().ok()).flatten()  // TODO: fade out, cross fade
+				}); // TODO: fade out, cross fade
 				let sample_format = decoder.codec_params().sample_format.unwrap_or_else(|| match decoder.decode(&packets.next().unwrap()).unwrap() {
 					AudioBufferRef::S32(_) => SampleFormat::S32,
 					AudioBufferRef::F32(_) => SampleFormat::F32,
@@ -205,7 +214,7 @@ fn main() -> Result {
 	}
 	fn event(&mut self, _: &Context, _: &mut Commands, _: size, _event_context: &mut EventContext, event: &Event) -> Result<bool> {
 		Ok(match event {
-			Event::Key(' ') => { for output in &self.output { output.toggle_play_pause()?; } false },
+			Event::Key(' ') => { if self.pause.load(Relaxed) { self.pause.store(false, Relaxed); assert_eq!(self.unpark.notify_one(), true); } else { self.pause.store(true, Relaxed); } false },
 			//Event::Key(' ') => { for output in self.output { if output.running() { output.drop(); } else { } } true },
 			Event::Trigger => { /*event_context.toplevel.set_title(self.title()?);*/ true }
 			Event::Key('→') => { self.next.store(true, Relaxed); false },
