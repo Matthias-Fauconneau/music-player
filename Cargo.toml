@@ -10,7 +10,7 @@ rustix={version='*', features=['fs','event','mm']}
 walkdir='*'
 parking_lot='*'
 
-symphonia={features= ['flac'], version='*'}
+symphonia={default-features=false, features= ['flac'], version='*'}
 
 num={git='https://github.com/Matthias-Fauconneau/num'}
 realfft='*'
@@ -34,5 +34,10 @@ zbus=['dep:zbus','async-std']
 ui=['dep:ui', 'dep:vulkano', 'dep:vulkano-spirv', 'dep:bytemuck']
 default=['ui']
 
-#[patch.'https://github.com/Matthias-Fauconneau/ui']
-#ui={path='../ui'}
+[patch.'https://github.com/vulkano-rs/vulkano']
+vulkano={ git='https://github.com/Matthias-Fauconneau/vulkano'  } # drm modifier
+[patch.crates-io] # In case vulkano-spirv would depend on crates-io version. But currently it tracks git version (breaking changes in vulkano::shader::spirv))
+vulkano={ git='https://github.com/Matthias-Fauconneau/vulkano' } # drm modifier
+
+[patch.'https://github.com/Matthias-Fauconneau/ui']
+ui={path='../ui'}

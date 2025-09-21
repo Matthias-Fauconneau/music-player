@@ -1,8 +1,4 @@
-use fehler::throws;
-//pub use alsa::Error;
-//pub type Result<T=()> = alsa::Result<T>;
-pub use std::io::Error;
-pub type Result<T=(), E=Error> = std::result::Result<T,E>;
+pub type Result<T=(), E=std::io::Error> = std::result::Result<T,E>;
 
 const INTERVAL_FLAG_INTEGER : u32 = 1<<2;
 #[derive(Debug)] #[derive(Clone,Copy)] #[repr(C)] struct Interval { min: u32, max: u32, flags : u32 }
@@ -60,16 +56,16 @@ const  STATE_XRUN : u32 = 4;
 #[repr(C)] struct Status { state: u32, pad: u32, hw_pointer: usize, sec: u64, nsec: u64, suspended_state: u32 }
 #[repr(C)] struct Control { sw_pointer: usize, avail_min: u64 }
 
-pub struct PCM {
+pub struct Output {
 	fd: std::os::fd::OwnedFd,
 	pub rate: u32,
 	buffer: &'static mut [[i16; 2]],
 	status: *const Status,
 	control: *mut Control,
-	//period_size: u32,
+	pub t: usize, // like sw_pointer but isn't reset by driver when state changes
 }
 
-impl PCM {
+impl Output {
 	pub fn new(path: impl AsRef<std::path::Path>, rate: u32) -> Result<Self> {
 		let fd = rustix::fs::open(path.as_ref(), rustix::fs::OFlags::RDWR|rustix::fs::OFlags::NONBLOCK, rustix::fs::Mode::empty())?; //
 		let mut params = HWParams::new();
@@ -96,7 +92,7 @@ impl PCM {
   		unsafe{&mut *control}.avail_min = period_size as u64;
 		assert_eq!(unsafe{&*status}.state, STATE_SETUP);
   		prepare(&fd)?;
-		Ok(Self{fd, rate, buffer, status, control})//, period_size})
+		Ok(Self{fd, rate, buffer, status, control, t: 0})
 	}
 	pub fn try_write(&mut self, frames: &mut impl ExactSizeIterator<Item=[i16; 2]>) -> Result<usize> {
 		assert!(!frames.is_empty());
@@ -108,66 +104,52 @@ impl PCM {
 			len
 		}
 		let start = unsafe{&*self.control}.sw_pointer%self.buffer.len();
-		let available = self.buffer.len() - (unsafe{&*self.control}.sw_pointer - unsafe{&*self.status}.hw_pointer);
-		let len = if start + available <= self.buffer.len() {
-			let end = start+available;
-			write(&mut self.buffer[start..end], frames)
-		} else {
-			let len = write(&mut self.buffer[start..], frames);
-			if len < self.buffer.len()-start { len }
-			else { len + write(&mut self.buffer[0..available-len], frames) }
-		};
-		assert!(len as u32 > 0);
-		unsafe{&mut *self.control}.sw_pointer += len;
+		let sw_pointer = unsafe{&*self.control}.sw_pointer;
+		let hw_pointer =  unsafe{&*self.status}.hw_pointer;
+		let len = if sw_pointer >= hw_pointer {
+			let available = self.buffer.len() - (sw_pointer - hw_pointer);
+			let len = if start + available <= self.buffer.len() {
+				let end = start+available;
+				write(&mut self.buffer[start..end], frames)
+			} else {
+				let len = write(&mut self.buffer[start..], frames);
+				if len < self.buffer.len()-start { len }
+				else { len + write(&mut self.buffer[0..available-len], frames) }
+			};
+			assert!(len as u32 > 0);
+			unsafe{&mut *self.control}.sw_pointer += len;
+			self.t += len;
+			len
+		} else { assert_eq!(unsafe{&*self.status}.state, STATE_XRUN); 0 };
 		match unsafe{&*self.status}.state {
 			STATE_RUNNING => {},
 			STATE_PREPARED => { self::start(&self.fd)?; },
-			STATE_XRUN => { println!("xrun {available}"); self::prepare(&self.fd)?; },
+			STATE_XRUN => { println!("xrun"); self::prepare(&self.fd)?; },
 			state => panic!("{state}"),
 		}
 		Ok(len)
 	}
-	//pub fn playing(&self) -> bool { self.device.state() == State::Running }
-	//pub fn toggle_play_pause(&self) -> Result<()> { self.device.pause(self.playing()) }
 }
-//impl Default for PCM { fn default() -> Self { Self::new("/dev/snd/pcmC0D31p", 48000).unwrap() }}
 
 pub trait Write {
 	fn write<'t>(self, _: impl IntoIterator<IntoIter:ExactSizeIterator<Item=[i16; 2]>>) -> Result<()>;
 }
 
-/*impl<MutexGuard: std::ops::DerefMut<Target=PCM>, S: FnMut() -> MutexGuard> Write for S {
-#[throws] fn write(mut self, frames: impl IntoIterator<IntoIter:ExactSizeIterator<Item=[i16; 2]>>) {
-	let mut frames = frames.into_iter();
-	while !frames.is_empty() {
-		let audio_lock = self(); // Only lock to get the device fd
-		let ref fd = unsafe{std::os::fd::BorrowedFd::borrow_raw(rustix::fd::AsRawFd::as_raw_fd(&audio_lock.fd))}; // Downcast to drop lock while waiting
-		let ref mut fds = [rustix::event::PollFd::new(fd, rustix::event::PollFlags::OUT)];
-		drop(audio_lock); // But do not stay locked while this audio thread is waiting for the device
-		//println!("wait");
-		rustix::event::poll(fds, -1).unwrap();
-		assert!(fds[0].revents().contains(rustix::event::PollFlags::OUT));
-		//println!("ok");
-		//if(status->state == XRun) { io<PREPARE>(); underruns++; log("Underrun", underruns); }
-		self().try_write(&mut frames)?; // Waits for device. TODO: fade out and return on UI quit
-	}
-}}*/
-
-impl<MutexGuard: std::ops::DerefMut<Target=[PCM; N]>, S: FnMut() -> MutexGuard, const N: usize> Write for S {
-	#[throws] fn write(mut self, frames: impl IntoIterator<IntoIter:ExactSizeIterator<Item=[i16; 2]>>) {
+impl<MutexGuard: std::ops::DerefMut<Target=[Output; N]>, S: FnMut() -> MutexGuard, const N: usize> Write for S {
+	fn write(mut self, frames: impl IntoIterator<IntoIter:ExactSizeIterator<Item=[i16; 2]>>) -> Result {
 		let frames = Box::from_iter(frames.into_iter());
 		let ref mut frames = [(); N].map(|_| frames.iter().copied());
 		while !frames.iter().all(|frames| frames.is_empty()) {
-			let audio_lock = self(); // Only lock to get the device fd
-			let ref fds = Vec::from_iter(audio_lock.iter().map(|pcm| unsafe{std::os::fd::BorrowedFd::borrow_raw(rustix::fd::AsRawFd::as_raw_fd(&pcm.fd))})); // Downcast to drop lock while waiting
-			let ref mut fds = Vec::from_iter(fds.into_iter().map(|fd| rustix::event::PollFd::new(fd, rustix::event::PollFlags::OUT)));
+			let audio_lock = self(); // Need to lock to get the device fd
+			fn map<T, U>(iter: impl IntoIterator<Item=T>, f: impl Fn(T) -> U) -> Box<[U]> { Box::from_iter(iter.into_iter().map(f)) }
+			unsafe fn erase<'t>(fd: &impl std::os::fd::AsRawFd) -> std::os::fd::BorrowedFd<'t> { unsafe{std::os::fd::BorrowedFd::borrow_raw(fd.as_raw_fd())} }
+			let ref fds = map(audio_lock.deref(), |pcm| unsafe{erase(&pcm.fd)}); // Erase lifetime to drop lock while waiting
 			drop(audio_lock); // But do not stay locked while this audio thread is waiting for the device
-			//println!("wait");
+			let ref mut fds = Vec::from_iter(fds.into_iter().map(|fd| rustix::event::PollFd::new(fd, rustix::event::PollFlags::OUT)));
 			rustix::event::poll(fds, None).unwrap();
 			assert!(fds.into_iter().any(|fd| fd.revents().contains(rustix::event::PollFlags::OUT)));
-			//println!("ok");
-			//if(status->state == XRun) { io<PREPARE>(); underruns++; log("Underrun", underruns); }
 			for ((pcm, frames), fd) in (*self()).iter_mut().zip(frames.iter_mut()).zip(fds) { if !frames.is_empty() && fd.revents().contains(rustix::event::PollFlags::OUT) { pcm.try_write(frames)?; } } // Waits for device. TODO: fade out and return on UI quit
 		}
-	}}
-
+		Ok(())
+	}
+}
