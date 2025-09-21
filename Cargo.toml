@@ -21,7 +21,7 @@ vulkano-spirv={git='https://github.com/Matthias-Fauconneau/vulkano-spirv', optio
 bytemuck={version='*', optional=true}
 
 image={git='https://github.com/Matthias-Fauconneau/image'}
-image-io={package='image', version='*'}
+#image-io={package='image', version='*', default-features=false, optional=true}
 
 zbus={version='*', optional=true}
 async-std={features=['attributes'], version='*', optional=true}
@@ -31,7 +31,7 @@ xdg-user='*'
 [features]
 resample=[]
 zbus=['dep:zbus','async-std']
-ui=['dep:ui', 'dep:vulkano', 'dep:vulkano-spirv', 'dep:bytemuck']
+ui=['dep:ui', 'dep:vulkano', 'dep:vulkano-spirv', 'dep:bytemuck','ui/text']
 default=['ui']
 
 [patch.'https://github.com/vulkano-rs/vulkano']

@@ -55,7 +55,7 @@ impl<'t> Player<'t> {
 		metadata: default(),
 		next
 	}}
-	//fn title(&self) -> Result<&String> { self.metadata.get("xesam:title").ok_or("Missing title".into()) }
+	fn title(&self) -> Result<&String> { self.metadata.get("xesam:title").ok_or("Missing title".into()) }
 }
 
 
@@ -155,8 +155,7 @@ fn main() -> Result {
 	})
 }
 
-#[cfg(feature="ui")] use ui::{size, int2, image::{Image, rgba8}, Widget, EventContext, Event, vulkan, shader};
-#[cfg(feature="ui")] use vulkan::{Context, Commands, ImageView, PrimitiveTopology, image, WriteDescriptorSet, linear};
+#[cfg(feature="ui")] use ui::{xy, size, int2, Widget, EventContext, Event, shader, Context, Commands, ImageView, text, fit};
 #[cfg(feature="ui")] shader!{view}
 #[cfg(feature="ui")] impl<T:Widget> Widget for Arch<T> {
 	fn paint(&mut self, context: &Context, commands: &mut Commands, target: Arc<ImageView>, size: size, offset: int2) -> Result {
@@ -183,13 +182,14 @@ fn main() -> Result {
 			use image::xy;
 			target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}).fill(white.into());
 			target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}).fill(white.into());
-		}
-		if !self.metadata.is_empty() {
-			let mut text = text(self.title().expect(&format!("{:?}",self.metadata)), &[]);
-			let text_size = fit(size, text.size());
-			text.paint_fit(target, target.size, xy{x: 0, y: (size.y as i32-text_size.y as i32)/2});
 		}*/
-		let mut pass = view::Pass::new(context, false, PrimitiveTopology::TriangleList)?;
+		if !self.metadata.is_empty() {
+			let mut text = text(self.title().expect(&format!("{:?}",self.metadata)));
+			let text_size = fit(size, text.size());
+			text.paint_fit(context, commands, target, size, xy{x: 0, y: (size.y as i32-text_size.y as i32)/2});
+		}
+		//image::{Image, rgba8}, #[cfg(feature="ui")] use vulkan::{Context, Commands, ImageView, PrimitiveTopology, image, WriteDescriptorSet, linear};
+		/*let mut pass = view::Pass::new(context, false, PrimitiveTopology::TriangleList)?;
 		let image = image(context, commands,
 			//Image::uninitialized(size)
 			Image::fill(size, rgba8{r: 0, g: 0, b: 0, a: 0xFF})
@@ -200,13 +200,14 @@ fn main() -> Result {
 			WriteDescriptorSet::sampler(1, linear(context)),
 		])?;
 		unsafe{commands.draw(3, 1, 0, 0)}?;
-		commands.end_rendering()?;
+		commands.end_rendering()?;*/
 		Ok(())
 	}
 	fn event(&mut self, _: &Context, _: &mut Commands, _: size, _event_context: &mut EventContext, event: &Event) -> Result<bool> {
 		Ok(match event {
-			//Event::Key(' ') => { for output in self.output { output.toggle_play_pause()?; } true },
-			//Event::Trigger => { event_context.toplevel.set_title(self.title()?); true }
+			Event::Key(' ') => { for output in &self.output { output.toggle_play_pause()?; } false },
+			//Event::Key(' ') => { for output in self.output { if output.running() { output.drop(); } else { } } true },
+			Event::Trigger => { /*event_context.toplevel.set_title(self.title()?);*/ true }
 			Event::Key('→') => { self.next.store(true, Relaxed); false },
 			_ => false
 		})
