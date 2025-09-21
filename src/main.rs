@@ -1,4 +1,4 @@
-#![feature(exact_size_is_empty, impl_trait_in_assoc_type)]#![allow(mixed_script_confusables)]
+#![feature(exact_size_is_empty, impl_trait_in_assoc_type)]#![feature(slice_from_ptr_range)]/*shader*/#![allow(mixed_script_confusables)]
 mod audio;
 #[cfg(feature="zbus")] mod mpris;
 pub trait Decoder<Packet> { type Buffer<'t> where Self: 't; fn decode(&mut self, _: &Packet) -> Self::Buffer<'_>; }
@@ -8,7 +8,6 @@ fn default<T: Default>() -> T { Default::default() }
 type Result<T = (), E = Box<dyn std::error::Error>>  = std::result::Result<T, E>;
 
 use symphonia::core::{formats, codecs, meta};
-#[cfg(feature="ui")] use ui::*;
 
 fn open(path: &std::path::Path) -> Result<(Box<dyn formats::FormatReader>, std::collections::HashMap<String, String>, Box<dyn codecs::Decoder>)> {
 	let mut file = symphonia::default::get_probe().format(&symphonia::core::probe::Hint::new().with_extension(path.extension().ok_or("")?.to_str().unwrap()),
@@ -151,13 +150,16 @@ fn main() -> Result {
 	Ok(())
 }
 
+#[cfg(feature="ui")] use ui::{size, int2, image::{Image, xy, rgba8}, Widget, Error, throws, EventContext, Event, vulkan, shader};
+#[cfg(feature="ui")] use vulkan::{Context, Commands, ImageView, PrimitiveTopology, image, WriteDescriptorSet, linear};
+#[cfg(feature="ui")] shader!{view}
 #[cfg(feature="ui")] impl<T:Widget> Widget for Arch<T> {
-	fn paint(&mut self, target: &mut Target, size: size, offset: int2) -> Result { self.lock().paint(target, size, offset) }
-	fn event(&mut self, size: size, context: &mut EventContext, event: &Event) -> Result<bool> { self.lock().event(size, context, event) }
+	fn paint(&mut self, context: &Context, commands: &mut Commands, target: Arc<ImageView>, size: size, offset: int2) -> Result { self.lock().paint(context, commands, target, size, offset) }
+	fn event(&mut self, context: &Context, commands: &mut Commands, size: size, event_context: &mut EventContext, event: &Event) -> Result<bool> { self.lock().event(context, commands, size, event_context, event) }
 }
 
 #[cfg(feature="ui")] impl Widget for Player {
-	#[throws] fn paint(&mut self, target: &mut Target, size: size, _: int2) {
+	#[throws] fn paint(&mut self, context: &Context, commands: &mut Commands, target: Arc<ImageView>, size: size, _: int2) {
 		/*let _ : Result<()> = try {
 			let path = url::Url::parse(self.metadata.get("mpris:artUrl").ok_or("Missing cover")?)?;
 			let path = path.to_file_path().expect("Expecting local cover");
@@ -168,9 +170,9 @@ fn main() -> Result {
 			let [num, den] = if source.size.x*target.size.y > source.size.y*target.size.x { [source.size.x, target.size.x] } else { [source.size.y, target.size.y] };
 			target.set(|p| image::rgb8_to_10(map, source[p*num/den]));
 		};*/
-		if !self.output.playing() {
-			let size = std::cmp::min(target.size.x, target.size.y).into();
-			let mut target = target.slice_mut((target.size-size)/2, size);
+		/*if !self.output.playing() {
+			let min = std::cmp::min(size.x, size.y).into();
+			let mut target = target.slice_mut((size-min)/2, min);
 			use image::xy;
 			target.slice_mut(size*xy{x:1, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}).fill(white.into());
 			target.slice_mut(size*xy{x:3, y:1}/xy{x:5, y:5}, size*xy{x:1, y:3}/xy{x:5, y:5}).fill(white.into());
@@ -179,12 +181,20 @@ fn main() -> Result {
 			let mut text = text(self.title().expect(&format!("{:?}",self.metadata)), &[]);
 			let text_size = fit(size, text.size());
 			text.paint_fit(target, target.size, xy{x: 0, y: (size.y as i32-text_size.y as i32)/2});
-		}
+		}*/
+		let mut pass = view::Pass::new(context, false, PrimitiveTopology::TriangleList)?;
+		let image = image(context, commands, Image::from_xy(size, |xy{x,y}| rgba8{r: if x%2==0 { 0 } else { 0xFF }, g: if y%2==0 { 0 } else { 0xFF }, b: 0xFF, a: 0xFF}).as_ref())?;
+		pass.begin_rendering(context, commands, target.clone(), None, true, &view::Uniforms::empty(), &[
+			WriteDescriptorSet::image_view(0, ImageView::new_default(&image)?),
+        WriteDescriptorSet::sampler(1, linear(context)),
+		])?;
+		unsafe{commands.draw(3, 1, 0, 0)}?;
+		commands.end_rendering()?;
 	}
-	#[throws] fn event(&mut self, _: size, ctx: &mut EventContext, event: &Event) -> bool {
+	#[throws] fn event(&mut self, _: &Context, _: &mut Commands, _: size, _: &mut EventContext, event: &Event) -> bool {
 		match event {
-			Event::Key(' ') => { self.output.toggle_play_pause()?; true },
-			Event::Trigger => { ctx.toplevel.set_title(self.title()?); true }
+			//Event::Key(' ') => { for output in self.output { output.toggle_play_pause()?; } true },
+			//Event::Trigger => { event_context.toplevel.set_title(self.title()?); true }
 			_ => false
 		}
 	}

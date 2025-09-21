@@ -108,7 +108,7 @@ impl PCM {
 			len
 		}
 		let start = unsafe{&*self.control}.sw_pointer%self.buffer.len();
-		let available = self.buffer.len() - unsafe{&*self.control}.sw_pointer + unsafe{&*self.status}.hw_pointer;
+		let available = self.buffer.len() - (unsafe{&*self.control}.sw_pointer - unsafe{&*self.status}.hw_pointer);
 		let len = if start + available <= self.buffer.len() {
 			let end = start+available;
 			write(&mut self.buffer[start..end], frames)

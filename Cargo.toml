@@ -1,4 +1,5 @@
 package={name='music-player', version='0.0.0', authors=['Matthias Fauconneau <matthias.fauconneau@gmail.com>'], edition= '2024'}
+build-dependencies={wgsl = {git='https://github.com/Matthias-Fauconneau/ui'}}
 
 [dependencies]
 fehler='*'
@@ -9,12 +10,15 @@ rustix={version='*', features=['fs','event','mm']}
 walkdir='*'
 parking_lot='*'
 
-symphonia={features= ['flac','mp3'], version='*'}
+symphonia={features= ['flac'], version='*'}
 
 num={git='https://github.com/Matthias-Fauconneau/num'}
 realfft='*'
 
-ui={git='https://github.com/Matthias-Fauconneau/ui', features=['text'], optional=true}
+ui={git='https://github.com/Matthias-Fauconneau/ui', optional=true}
+vulkano={git='https://github.com/vulkano-rs/vulkano', default-features=false, features=['macros'], optional=true}
+vulkano-spirv={git='https://github.com/Matthias-Fauconneau/vulkano-spirv', optional=true}
+bytemuck={version='*', optional=true}
 
 image={git='https://github.com/Matthias-Fauconneau/image'}
 image-io={package='image', version='*'}
@@ -27,4 +31,8 @@ xdg-user='*'
 [features]
 resample=[]
 zbus=['dep:zbus','async-std']
-#default=['zbus']
+ui=['dep:ui', 'dep:vulkano', 'dep:vulkano-spirv', 'dep:bytemuck']
+default=['ui']
+
+#[patch.'https://github.com/Matthias-Fauconneau/ui']
+#ui={path='../ui'}
